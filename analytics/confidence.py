@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .config.settings import CONFIDENCE as _CFG
+from .config import settings
 
 
 @dataclass(frozen=True)
@@ -47,9 +47,9 @@ class ConfidenceInfo:
 
 
 def _label(score: int) -> str:
-    if score >= _CFG.high_min:
+    if score >= settings.CONFIDENCE.high_min:
         return "High"
-    if score >= _CFG.medium_min:
+    if score >= settings.CONFIDENCE.medium_min:
         return "Medium"
     return "Low"
 
@@ -73,13 +73,13 @@ def compute_confidence(
     Returns:
         ConfidenceInfo, albo None gdy zbyt mało danych (min_points_for_confidence).
     """
-    if n_points < _CFG.min_points_for_confidence:
+    if n_points < settings.CONFIDENCE.min_points_for_confidence:
         return None
 
     total = max(window_days, n_points, 1)
 
     # 1) ilość danych historycznych
-    h = min(n_points / max(_CFG.target_n_points, 1), 1.0)
+    h = min(n_points / max(settings.CONFIDENCE.target_n_points, 1), 1.0)
 
     # 2) kompletność okna (dni z danymi / dni okna; cap dniem liczby punktów)
     effective_days = min(n_points, window_days) if window_days else n_points
@@ -93,10 +93,10 @@ def compute_confidence(
     coverage = 1.0 - min(n_missing / max(total, 1), 1.0)
 
     raw = (
-        _CFG.w_history * h
-        + _CFG.w_completeness * completeness
-        + _CFG.w_stability * stab
-        + _CFG.w_coverage * coverage
+        settings.CONFIDENCE.w_history * h
+        + settings.CONFIDENCE.w_completeness * completeness
+        + settings.CONFIDENCE.w_stability * stab
+        + settings.CONFIDENCE.w_coverage * coverage
     )
     score = int(round(raw * 100))
     score = max(0, min(score, 100))

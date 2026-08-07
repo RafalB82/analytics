@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .config.settings import RANGES
+from .config import settings
 
 
 @dataclass(frozen=True)
@@ -47,11 +47,11 @@ _ACWR_NORMAL = (0.8, 1.3)
 
 
 METRICS: list[Metric] = [
-    Metric("hrv", "Zmienność rytmu serca (regeneracja)", "ms", RANGES.hrv, "readiness"),
-    Metric("rhr", "Tętno spoczynkowe", "bpm", RANGES.rhr, "readiness"),
-    Metric("sleep", "Sen (godziny/noc)", "h", RANGES.sleep, "readiness"),
-    Metric("temperature", "Temperatura nadgarstka", "C", RANGES.temperature, "temperature"),
-    Metric("weight", "Masa ciała (punkt kontrolny)", "kg", RANGES.weight, "nutrition"),
+    Metric("hrv", "Zmienność rytmu serca (regeneracja)", "ms", settings.RANGES.hrv, "readiness"),
+    Metric("rhr", "Tętno spoczynkowe", "bpm", settings.RANGES.rhr, "readiness"),
+    Metric("sleep", "Sen (godziny/noc)", "h", settings.RANGES.sleep, "readiness"),
+    Metric("temperature", "Temperatura nadgarstka", "C", settings.RANGES.temperature, "temperature"),
+    Metric("weight", "Masa ciała (punkt kontrolny)", "kg", settings.RANGES.weight, "nutrition"),
     Metric("tdee", "Całkowity wydatek energetyczny (dziennie)", "kcal", None, "nutrition"),
     Metric("acwr", "Stosunek obciążenia ostrego do przewlekłego", "-", _ACWR_NORMAL, "acwr"),
     Metric("readiness", "Indeks gotowości (0-100)", "%", (0.0, 100.0), "readiness"),

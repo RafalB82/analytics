@@ -16,7 +16,7 @@ from datetime import date
 
 import numpy as np
 
-from .config.settings import ACWR as _CFG
+from .config import settings
 from .logging import get_logger
 
 logger = get_logger(__name__)
@@ -80,7 +80,7 @@ def fill_missing_days(daily_loads: dict[date, float], start: date, end: date) ->
 def compute_acute_load(daily_series: list[SessionLoad], window: int | None = None) -> float:
     """Średnia dzienna z ostatnich `window` dni (nie suma — łatwiej interpretować i porównywać z chronic)."""
     if window is None:
-        window = _CFG.acute_window
+        window = settings.ACWR.acute_window
     recent = daily_series[-window:]
     if not recent:
         return 0.0
@@ -101,11 +101,11 @@ def compute_chronic_load(
     co jest znaną wadą prostego rolling average w oryginalnej metodzie.
     """
     if window is None:
-        window = _CFG.chronic_window
+        window = settings.ACWR.chronic_window
     if use_ewma is None:
-        use_ewma = _CFG.chronic_use_ewma
+        use_ewma = settings.ACWR.chronic_use_ewma
     if alpha is None:
-        alpha = _CFG.chronic_alpha
+        alpha = settings.ACWR.chronic_alpha
     recent = daily_series[-window:]
     if not recent:
         return 0.0
@@ -124,11 +124,11 @@ def acwr_ratio(acute: float, chronic: float) -> ACWRResult:
     """Klasyfikacja strefy ryzyka na podstawie stosunku acute/chronic."""
     ratio = 0.0 if chronic == 0 else round(acute / chronic, 2)
 
-    if ratio < _CFG.zone_low:
+    if ratio < settings.ACWR.zone_low:
         zone = "niedociążenie"
-    elif ratio <= _CFG.zone_optimal_high:
+    elif ratio <= settings.ACWR.zone_optimal_high:
         zone = "optymalna"
-    elif ratio <= _CFG.zone_elevated_high:
+    elif ratio <= settings.ACWR.zone_elevated_high:
         zone = "podwyższone ryzyko"
     else:
         zone = "wysokie ryzyko"

@@ -23,7 +23,7 @@ from typing import Any
 
 import numpy as np
 
-from .config.settings import NUTRITION as _CFG
+from .config import settings
 from .logging import get_logger
 
 logger = get_logger(__name__)
@@ -63,7 +63,7 @@ class TDEEEstimate:
 
 
 def _kj_to_kcal(kj: float) -> float:
-    return kj / _CFG.kj_per_kcal
+    return kj / settings.NUTRITION.kj_per_kcal
 
 
 #: mapu stosunek cel diety na fazę białkową (klucze `protein_g_per_kg`).
@@ -100,8 +100,8 @@ def compute_tdee(
 
     Rzuca ValueError, gdy brak wystarczającej liczby dni z kompletem energii.
     """
-    window = window_days or _CFG.activity_window_days
-    compute_long = _CFG.compute_long_window if compute_long is None else compute_long
+    window = window_days or settings.NUTRITION.activity_window_days
+    compute_long = settings.NUTRITION.compute_long_window if compute_long is None else compute_long
 
     # wybierz ostatnie `window` dni
     recent = energy_series[-window:]
@@ -126,7 +126,7 @@ def compute_tdee(
     n_training = sum(1 for d in recent if (d.exercise_min or 0) > 0)
     training_ratio = round(n_training / len(recent), 2) if recent else 0.0
 
-    margin = float(_CFG.goal_margin.get(goal, _CFG.margin_default))
+    margin = float(settings.NUTRITION.goal_margin.get(goal, settings.NUTRITION.margin_default))
     target = round(tdee * (1 + margin), 0)
 
     protein = None
@@ -162,8 +162,8 @@ def compute_long_window_tdee(
     TDEE na dłuższym oknie (28d) — stabilniejsza średnica miesięczna.
     Zwraca None, gdy za mało danych. Używane jako porównanie do 7d.
     """
-    long_window = _CFG.activity_window_long_days
-    if len(energy_series) < _CFG.weight_min_points:  # reużyj progu min punktów
+    long_window = settings.NUTRITION.activity_window_long_days
+    if len(energy_series) < settings.NUTRITION.weight_min_points:  # reużyj progu min punktów
         return None
     try:
         return compute_tdee(
@@ -211,9 +211,9 @@ def compute_weight_trend(
       - n_points / window_days: kontekst danych
     """
     if window_days is None:
-        window_days = _CFG.weight_trend_window_days
+        window_days = settings.NUTRITION.weight_trend_window_days
     if min_points is None:
-        min_points = _CFG.weight_min_points
+        min_points = settings.NUTRITION.weight_min_points
     if len(series) < min_points:
         logger.debug("za mało punktów wagi do trendu: %d (min %d)", len(series), min_points)
         return None
@@ -245,7 +245,7 @@ def adjust_tdee(
     korekta zwykle nie jest potrzebna. Zwraca no-op gdy brak trendu.
     """
     if max_single_adjustment_kcal is None:
-        max_single_adjustment_kcal = _CFG.max_single_adjustment_kcal
+        max_single_adjustment_kcal = settings.NUTRITION.max_single_adjustment_kcal
     if weight_trend_kg_per_day is None:
         return TDEEAdjustment(
             old_tdee=current_tdee, new_tdee=current_tdee,
@@ -253,11 +253,11 @@ def adjust_tdee(
         )
     weekly = weight_trend_kg_per_day * 7
     gap = weekly - target_trend_kg_per_week
-    raw = (gap * _CFG.kcal_per_kg_fat) / 7
+    raw = (gap * settings.NUTRITION.kcal_per_kg_fat) / 7
     adj = -raw
     adj = max(-max_single_adjustment_kcal, min(max_single_adjustment_kcal, adj))
     new_tdee = round(current_tdee + adj, 0)
-    confidence = "wysoka" if abs(gap) > _CFG.confidence_gap_kg_per_week else "średnia"
+    confidence = "wysoka" if abs(gap) > settings.NUTRITION.confidence_gap_kg_per_week else "średnia"
     return TDEEAdjustment(
         old_tdee=current_tdee, new_tdee=new_tdee,
         weekly_trend_kg=round(weekly, 3), adjustment_kcal=round(adj, 0),
@@ -284,6 +284,6 @@ def compute_protein_target(
     Skalowanie celu białka do wagi zamiast sztywnej wartości.
     Deficyt wymaga górnej granicy (ochrona masy mięśniowej).
     """
-    ranges = _CFG.protein_g_per_kg
+    ranges = settings.NUTRITION.protein_g_per_kg
     g_per_kg = float(ranges.get(phase, 1.8))
     return round(bodyweight_kg * g_per_kg, 0)

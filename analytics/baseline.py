@@ -13,7 +13,7 @@ from datetime import date
 
 import numpy as np
 
-from .config.settings import BASELINE as _CFG
+from .config import settings
 from .logging import get_logger
 
 logger = get_logger(__name__)
@@ -56,9 +56,9 @@ def compute_ewma_baseline(
     = dzień, dla którego liczysz odchylenie (nie wchodzi do baseline).
     """
     if alpha is None:
-        alpha = _CFG.ewma_alpha
+        alpha = settings.BASELINE.ewma_alpha
     if min_points is None:
-        min_points = _CFG.min_points
+        min_points = settings.BASELINE.min_points
     if len(series) < min_points + 1:
         logger.debug("za mało punktów do baseline: %d (min %d)", len(series), min_points + 1)
         return None
@@ -97,7 +97,7 @@ def baseline_by_context(
     zaszumia sygnał.
     """
     if min_points is None:
-        min_points = _CFG.min_points_context
+        min_points = settings.BASELINE.min_points_context
     filtered = [p for p in series[:-1] if p.is_training_day == current_is_training_day]
     filtered.append(series[-1])
     return compute_ewma_baseline(filtered, alpha=alpha, min_points=min_points)
@@ -120,11 +120,11 @@ def compute_trend_slope(
     sygnału, nie ufaj kierunkowi.
     """
     if window_days is None:
-        window_days = _CFG.trend_window_days
+        window_days = settings.BASELINE.trend_window_days
     if smoothing_window is None:
-        smoothing_window = _CFG.trend_smoothing
+        smoothing_window = settings.BASELINE.trend_smoothing
     if min_r_squared is None:
-        min_r_squared = _CFG.trend_min_r_squared
+        min_r_squared = settings.BASELINE.trend_min_r_squared
     recent = series[-window_days:]
     if len(recent) < max(4, smoothing_window + 2):
         return None
@@ -178,11 +178,11 @@ def detect_baseline_shift(
     baseline, nie jako automatyczną korektę bez nadzoru.
     """
     if threshold_pct is None:
-        threshold_pct = _CFG.shift_threshold_pct
+        threshold_pct = settings.BASELINE.shift_threshold_pct
     if alpha_short is None:
-        alpha_short = _CFG.shift_alpha_short
+        alpha_short = settings.BASELINE.shift_alpha_short
     if alpha_long is None:
-        alpha_long = _CFG.shift_alpha_long
+        alpha_long = settings.BASELINE.shift_alpha_long
     short_bl = compute_ewma_baseline(short_series, alpha=alpha_short, min_points=4)
     long_bl = compute_ewma_baseline(long_series, alpha=alpha_long, min_points=10)
 

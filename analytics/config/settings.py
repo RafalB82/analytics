@@ -178,6 +178,22 @@ class ConfidenceSettings:
     min_points_for_confidence: int = 3
 
 
+# --- Stability (faza 3.0: zmienność aktywności) ----------------------------
+
+
+@dataclass(frozen=True)
+class StabilitySettings:
+    """Progi kategoryzacji zmienności aktywności.
+
+    variation = (max(avg) - min(avg)) / max(avg) dla okien 7/14/28 dni.
+    """
+
+    #: poniżej -> Stable
+    stable_max_variation: float = 0.10
+    #: poniżej -> Moderately Variable; powyżej -> Highly Variable
+    moderate_max_variation: float = 0.25
+
+
 # --- Walidacja (zakresy metryk) ---------------------------------------------
 
 
@@ -207,6 +223,7 @@ TEMPERATURE = TemperatureSettings()
 NUTRITION = NutritionSettings()
 READINESS = ReadinessSettings()
 CONFIDENCE = ConfidenceSettings()
+STABILITY = StabilitySettings()
 RANGES = MetricRanges()
 
 __all__ = [

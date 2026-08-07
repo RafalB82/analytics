@@ -51,6 +51,7 @@ from . import acwr as acwr_mod
 from . import baseline as baseline_mod
 from . import confidence as conf_mod
 from . import nutrition_adaptive as nutr_mod
+from . import stability as stab_mod
 from . import temperature as temp_mod
 from .config.settings import ACWR as ACWR_CFG
 from .exceptions import InsufficientDataError, InvalidMetricError
@@ -339,11 +340,18 @@ def run(payload: dict) -> dict[str, Any]:
             )
             if c_tdee:
                 confidence["tdee"] = c_tdee.to_dict()
+        # ACWR: używamy REALNEJ liczby dni z treningiem (load>0), a nie
+        # wypełnionych zerami dni (fill_missing_days) — inaczej confidence
+        # byłoby sztucznie zawyżone do „pełnych danych".
+        training_days = sum(1 for d in acwr_info["daily_loads"] if d.load > 0)
         c_acwr = conf_mod.compute_confidence(
-            n_points=len(acwr_info["daily_loads"]), window_days=ACWR_CFG.chronic_window,
+            n_points=training_days, window_days=ACWR_CFG.chronic_window,
         )
         if c_acwr:
             confidence["acwr"] = c_acwr.to_dict()
+
+        # --- Activity Stability (faza 3.0) -------------------------------------
+        activity_stability = stab_mod.activity_stability(activity_vals) if activity_vals else None
 
         report = AnalysisReport(
             status="ok",
@@ -367,6 +375,9 @@ def run(payload: dict) -> dict[str, Any]:
                 "rhr": (asdict(trend_rhr) if trend_rhr else None),
             },
             confidence=confidence or None,
+            activity_stability=(
+                activity_stability.to_dict() if activity_stability else None
+            ),
             inputs={
                 "apple_points": {
                     "hrv": len(models["hrv_series"]),

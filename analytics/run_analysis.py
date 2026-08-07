@@ -49,18 +49,13 @@ from pydantic import ValidationError
 
 from . import acwr as acwr_mod
 from . import baseline as baseline_mod
-from . import confidence as conf_mod
 from . import nutrition_adaptive as nutr_mod
-from . import stability as stab_mod
 from . import temperature as temp_mod
 from .config.settings import ACWR as ACWR_CFG
 from .exceptions import InsufficientDataError, InvalidMetricError
 from .fetch_apple import build_apple_input
 from .fetch_hevy import build_daily_load_series, rpe_coverage
-from .fetch_mfp import to_weight_series
 from .logging import get_logger
-from .models import AnalysisReport
-from .readiness_integration import compute_full_readiness
 
 logger = get_logger("run_analysis")
 
@@ -283,128 +278,29 @@ def _temp_output(alert: temp_mod.TempAlert, temp_series, target: date) -> dict:
 def run(payload: dict) -> dict[str, Any]:
     """Główny punkt wejścia analizy. Przyjmuje dict (już sparsowany JSON).
 
+    Deleguję do AnalyticsPipeline (analytics/pipeline.py) — 5 stage'ów:
+    InputValidation -> ModelBuilding -> Analytics -> Confidence -> Serialization.
+
     - `InsufficientDataError`  -> status fallback (brak danych, nie fatal)
     - `InvalidMetricError`     -> status error (problem z danymi/konfiguracją)
     """
+    from .pipeline import PIPELINE, PipelineContext
+
     try:
-        source, target, params, apple_daily, hevy_workouts, mfp_weight, apple_temp = \
-            validate_input(payload)
-        models = build_apple_models(apple_daily, target, apple_temp)
-        acwr_info = build_acwr(hevy_workouts, target)
-        temp_alert = _build_temp_status(models["temp_series"], models["hrv_series"], target)
-
-        readiness = compute_full_readiness(
-            hrv_series=models["hrv_series"],
-            rhr_series=models["rhr_series"],
-            sleep_hours_today=models["sleep_hours_today"],
-            acwr_result=acwr_info["result"],
-            temp_alert=temp_alert,
-            spo2_confirmed=False,
-        )
-        goal_info = _compute_goal(models["energy_series"], models["weight_info"], params)
-
-        trend_hrv = baseline_mod.compute_trend_slope(models["hrv_series"])
-        trend_rhr = baseline_mod.compute_trend_slope(models["rhr_series"])
-
-        # --- Confidence Score (faza 2.0) ---------------------------------------
-        hrv_vals = [p.value for p in models["hrv_series"]]
-        rhr_vals = [p.value for p in models["rhr_series"]]
-        # aktywność: suma basal+active (kJ) per dzień -> stabilność
-        activity_vals = [
-            (e.basal_kj or 0.0) + (e.active_kj or 0.0)
-            for e in models["energy_series"]
-        ]
-        act_stability = conf_mod.hr_series_stability(activity_vals) if activity_vals else None
-        n_window = (
-            goal_info.get("window_days", 7)
-            if goal_info.get("status") == "ok"
-            else None
-        )
-
-        confidence: dict[str, dict] = {}
-        c_hrv = conf_mod.compute_confidence(
-            n_points=len(hrv_vals), window_days=14,
-            stability=conf_mod.hr_series_stability(hrv_vals),
-        )
-        if c_hrv:
-            confidence["hrv"] = c_hrv.to_dict()
-        c_rhr = conf_mod.compute_confidence(
-            n_points=len(rhr_vals), window_days=14,
-            stability=conf_mod.hr_series_stability(rhr_vals),
-        )
-        if c_rhr:
-            confidence["rhr"] = c_rhr.to_dict()
-        if goal_info.get("status") == "ok" and n_window and activity_vals:
-            c_tdee = conf_mod.compute_confidence(
-                n_points=len(activity_vals), window_days=n_window,
-                stability=act_stability,
-            )
-            if c_tdee:
-                confidence["tdee"] = c_tdee.to_dict()
-        # ACWR: używamy REALNEJ liczby dni z treningiem (load>0), a nie
-        # wypełnionych zerami dni (fill_missing_days) — inaczej confidence
-        # byłoby sztucznie zawyżone do „pełnych danych".
-        training_days = sum(1 for d in acwr_info["daily_loads"] if d.load > 0)
-        c_acwr = conf_mod.compute_confidence(
-            n_points=training_days, window_days=ACWR_CFG.chronic_window,
-        )
-        if c_acwr:
-            confidence["acwr"] = c_acwr.to_dict()
-
-        # --- Activity Stability (faza 3.0) -------------------------------------
-        activity_stability = stab_mod.activity_stability(activity_vals) if activity_vals else None
-
-        # --- Weight Trend (faza 4.0) z serii MFP (jedyna seria wielopunktowa) ---
-        weight_trend = None
-        if mfp_weight:
-            w_series = to_weight_series(mfp_weight)
-            wt = nutr_mod.compute_weight_trend(w_series)
-            if wt is not None:
-                weight_trend = wt.to_dict()
-                logger.info("trend wagi: %+.3f kg/dzień (mediana %.2f kg, %d pkt)",
-                            wt.slope_kg_per_day, wt.rolling_median_kg, wt.n_points)
-
-        report = AnalysisReport(
-            status="ok",
-            source=source,
-            target_date=target,
-            readiness=asdict(readiness),
-            acwr=asdict(acwr_info["result"]),
-            acwr_detail={
-                "acute_7d": acwr_info["acute"],
-                "chronic_28d_ewma": acwr_info["chronic"],
-                "rpe_coverage": acwr_info["rpe_coverage"],
-                "daily_loads_last14": [
-                    {"day": str(d.day), "load": d.load}
-                    for d in acwr_info["daily_loads"][-14:]
-                ],
-            },
-            temperature=_temp_output(temp_alert, models["temp_series"], target),
-            nutrition=goal_info,
-            baseline_trends={
-                "hrv": (asdict(trend_hrv) if trend_hrv else None),
-                "rhr": (asdict(trend_rhr) if trend_rhr else None),
-            },
-            confidence=confidence or None,
-            weight_trend=weight_trend,
-            activity_stability=(
-                activity_stability.to_dict() if activity_stability else None
-            ),
-            inputs={
-                "apple_points": {
-                    "hrv": len(models["hrv_series"]),
-                    "rhr": len(models["rhr_series"]),
-                    "sleep_today_h": models["sleep_hours_today"],
-                    "temp": len(models["temp_series"]),
-                },
-                "sleep_data": ("ok" if models["sleep_hours_today"] is not None else "missing"),
-                "hevy_workouts_count": len(hevy_workouts),
-                "mfp_weight_points": len(mfp_weight),
-            },
-        )
+        ctx = PIPELINE.run(PipelineContext(
+            source=payload.get("source", ""),
+            target=payload.get("target_date"),
+            params=payload.get("params", {}),
+            apple_daily=payload.get("apple_daily", []),
+            hevy_workouts=payload.get("hevy_workouts", []),
+            mfp_weight=payload.get("mfp_weight") or [],
+            apple_temp=payload.get("apple_temp", []),
+        ))
+        target = ctx.target
+        readiness = ctx.readiness
         # Serializacja przez Pydantic (model_dump mode=json) + _json_safe na wszelki
         # wypadek gdyby zagnieżdżone wartości numpy przeszły przez dict-y (np. ACWR).
-        out = cast(dict[str, Any], _json_safe(report.model_dump(mode="json")))
+        out = cast(dict[str, Any], _json_safe(ctx.report.model_dump(mode="json")))
         logger.info("analiza OK dla %s (strefa %s)", target, readiness.zone)
         return out
 

@@ -145,6 +145,39 @@ class ReadinessSettings:
     zone_yellow_max: int = 3
 
 
+# --- Confidence (faza 2.0: wiarygodność metryk) ----------------------------
+
+
+@dataclass(frozen=True)
+class ConfidenceSettings:
+    """Wagi i progi dla Confidence Score (0-100) per metryka.
+
+    Score = ważona suma składowych, każda w zakresie [0,1] * 100.
+    Etykiety: >= HIGH_MIN -> High, >= MED_MIN -> Medium, w innym razie Low.
+    """
+
+    #: waga: ilość danych historycznych (n_points / target_n_points, cap 1.0)
+    w_history: float = 0.30
+    #: waga: kompletność okna (dni z danymi / dni okna)
+    w_completeness: float = 0.25
+    #: waga: stabilność (1 - min(cv, 1)), gdzie cv = std/mean aktywności
+    w_stability: float = 0.25
+    #: waga: brak luk (1 - missing/total)
+    w_coverage: float = 0.20
+
+    #: docelowa liczba punktów do pełnej „history" składowej
+    target_n_points: int = 14
+    #: docelowa liczba dni okna do pełnej „completeness"
+    target_window_days: int = 14
+
+    #: progi etykiet
+    high_min: int = 80
+    medium_min: int = 60
+
+    #: minimalna liczba punktów, poniżej której confidence = None (brak podstaw)
+    min_points_for_confidence: int = 3
+
+
 # --- Walidacja (zakresy metryk) ---------------------------------------------
 
 
@@ -173,6 +206,7 @@ ACWR = ACWRSettings()
 TEMPERATURE = TemperatureSettings()
 NUTRITION = NutritionSettings()
 READINESS = ReadinessSettings()
+CONFIDENCE = ConfidenceSettings()
 RANGES = MetricRanges()
 
 __all__ = [

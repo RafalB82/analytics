@@ -49,6 +49,7 @@ from pydantic import ValidationError
 
 from . import acwr as acwr_mod
 from . import baseline as baseline_mod
+from . import confidence as conf_mod
 from . import nutrition_adaptive as nutr_mod
 from . import temperature as temp_mod
 from .config.settings import ACWR as ACWR_CFG
@@ -303,6 +304,47 @@ def run(payload: dict) -> dict[str, Any]:
         trend_hrv = baseline_mod.compute_trend_slope(models["hrv_series"])
         trend_rhr = baseline_mod.compute_trend_slope(models["rhr_series"])
 
+        # --- Confidence Score (faza 2.0) ---------------------------------------
+        hrv_vals = [p.value for p in models["hrv_series"]]
+        rhr_vals = [p.value for p in models["rhr_series"]]
+        # aktywność: suma basal+active (kJ) per dzień -> stabilność
+        activity_vals = [
+            (e.basal_kj or 0.0) + (e.active_kj or 0.0)
+            for e in models["energy_series"]
+        ]
+        act_stability = conf_mod.hr_series_stability(activity_vals) if activity_vals else None
+        n_window = (
+            goal_info.get("window_days", 7)
+            if goal_info.get("status") == "ok"
+            else None
+        )
+
+        confidence: dict[str, dict] = {}
+        c_hrv = conf_mod.compute_confidence(
+            n_points=len(hrv_vals), window_days=14,
+            stability=conf_mod.hr_series_stability(hrv_vals),
+        )
+        if c_hrv:
+            confidence["hrv"] = c_hrv.to_dict()
+        c_rhr = conf_mod.compute_confidence(
+            n_points=len(rhr_vals), window_days=14,
+            stability=conf_mod.hr_series_stability(rhr_vals),
+        )
+        if c_rhr:
+            confidence["rhr"] = c_rhr.to_dict()
+        if goal_info.get("status") == "ok" and n_window and activity_vals:
+            c_tdee = conf_mod.compute_confidence(
+                n_points=len(activity_vals), window_days=n_window,
+                stability=act_stability,
+            )
+            if c_tdee:
+                confidence["tdee"] = c_tdee.to_dict()
+        c_acwr = conf_mod.compute_confidence(
+            n_points=len(acwr_info["daily_loads"]), window_days=ACWR_CFG.chronic_window,
+        )
+        if c_acwr:
+            confidence["acwr"] = c_acwr.to_dict()
+
         report = AnalysisReport(
             status="ok",
             source=source,
@@ -324,6 +366,7 @@ def run(payload: dict) -> dict[str, Any]:
                 "hrv": (asdict(trend_hrv) if trend_hrv else None),
                 "rhr": (asdict(trend_rhr) if trend_rhr else None),
             },
+            confidence=confidence or None,
             inputs={
                 "apple_points": {
                     "hrv": len(models["hrv_series"]),

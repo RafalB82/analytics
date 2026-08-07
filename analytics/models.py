@@ -14,7 +14,7 @@ from datetime import date
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .config.settings import RANGES
+from .config import settings
 
 
 class DailyMetrics(BaseModel):
@@ -28,11 +28,11 @@ class DailyMetrics(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     date: date
-    hrv: float | None = Field(default=None, ge=RANGES.hrv[0], le=RANGES.hrv[1])
-    rhr: float | None = Field(default=None, ge=RANGES.rhr[0], le=RANGES.rhr[1])
-    sleep: float | None = Field(default=None, ge=RANGES.sleep[0], le=RANGES.sleep[1])
-    weight: float | None = Field(default=None, ge=RANGES.weight[0], le=RANGES.weight[1])
-    temperature: float | None = Field(default=None, ge=RANGES.temperature[0], le=RANGES.temperature[1])
+    hrv: float | None = Field(default=None, ge=settings.RANGES.hrv[0], le=settings.RANGES.hrv[1])
+    rhr: float | None = Field(default=None, ge=settings.RANGES.rhr[0], le=settings.RANGES.rhr[1])
+    sleep: float | None = Field(default=None, ge=settings.RANGES.sleep[0], le=settings.RANGES.sleep[1])
+    weight: float | None = Field(default=None, ge=settings.RANGES.weight[0], le=settings.RANGES.weight[1])
+    temperature: float | None = Field(default=None, ge=settings.RANGES.temperature[0], le=settings.RANGES.temperature[1])
 
     # aktywność energetyczna (z get_daily_activity_range, po dedup w MCP)
     basal_kj: float | None = Field(default=None, ge=0)

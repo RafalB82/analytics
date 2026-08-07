@@ -17,7 +17,7 @@ from datetime import date
 
 import numpy as np
 
-from .config.settings import TEMPERATURE as _CFG
+from .config import settings
 from .logging import get_logger
 
 logger = get_logger(__name__)
@@ -49,7 +49,7 @@ def compute_temp_baseline(series: list[TempPoint], window: int | None = None) ->
     Jeśli pobierasz bezwzględną temperaturę, licz normalnie.
     """
     if window is None:
-        window = _CFG.baseline_window
+        window = settings.TEMPERATURE.baseline_window
     recent = [p.wrist_temp_c for p in series[-window:]]
     if not recent:
         return 0.0
@@ -73,13 +73,13 @@ def temp_deviation_alert(
     razem znacznie zwiększają pewność, że to nie szum pomiarowy.
     """
     if threshold_c is None:
-        threshold_c = _CFG.threshold_c
+        threshold_c = settings.TEMPERATURE.threshold_c
     deviation = round(current - baseline, 3)
     triggered = deviation >= threshold_c
 
     if not triggered:
         severity = "brak"
-    elif deviation >= threshold_c * _CFG.significant_multiplier or (triggered and hrv_dropped):
+    elif deviation >= threshold_c * settings.TEMPERATURE.significant_multiplier or (triggered and hrv_dropped):
         severity = "znacząca"
     else:
         severity = "podwyższona"

@@ -207,9 +207,18 @@ testami (161 przechodzi, pokrycie 90%), `ruff check` i `mypy` czyste.
 ### 2. 🟡 Eager-evaluated defaulty z configu
 - Wzorzec `alpha: float = _CFG.ewma_alpha` wyliczał wartość RAZ przy imporcie —
   podmiana `settings.BASELINE`/`ACWR` w runtime nie miała żadnego efektu.
-- Fix: domyślne `None` + lazy lookup w ciele funkcji (`alpha = alpha if alpha is not None
+- Fix (cz. 1): domyślne `None` + lazy lookup w ciele funkcji (`alpha = alpha if alpha is not None
   else _CFG.ewma_alpha`) w `baseline.py` (6×), `acwr.py` (5×), `temperature.py` (2×),
-  `nutrition_adaptive.py` (2×). Zweryfikowane empirycznie przez `inspect.signature` i podmianę configu.
+  `nutrition_adaptive.py` (2×).
+- Fix (cz. 2, głębszy wariant tego samego korzenia): moduły importowały
+  `from .config.settings import BASELINE as _CFG` — podmiana całego obiektu
+  `settings.BASELINE = dataclasses.replace(...)` nie docierała do modułów, bo
+  `_CFG` to osobny alias na stary obiekt. Zamieniono na `from .config import settings`
+  + odwołania `settings.BASELINE.ewma_alpha` we wszystkich modułach
+  (`baseline`, `acwr`, `confidence`, `nutrition_adaptive`, `readiness_integration`,
+  `stability`, `temperature`) oraz w `run_analysis`/`pipeline` (były `ACWR_CFG`).
+  Podmiana configu w runtime działa teraz wszędzie — warunek dla przyszłej
+  konfiguracji per-sport/per-profil (np. inny próg ACWR dla MTB niż siłowe).
 
 ### 3. 🟡 MTB / cardio brak w ACWR
 - ACWR liczył tylko tonaż z Hevy — jazda MTB nie wchodziła do obciążenia, zaniżając

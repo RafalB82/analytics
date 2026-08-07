@@ -51,7 +51,7 @@ from . import acwr as acwr_mod
 from . import baseline as baseline_mod
 from . import nutrition_adaptive as nutr_mod
 from . import temperature as temp_mod
-from .config.settings import ACWR as ACWR_CFG
+from .config import settings
 from .exceptions import InsufficientDataError, InvalidMetricError
 from .fetch_apple import build_apple_input
 from .fetch_hevy import build_daily_load_series, rpe_coverage
@@ -156,9 +156,9 @@ def build_acwr(hevy_workouts: list, target: date, cardio_sessions: list | None =
     """
     start = target - timedelta(days=ACWR_LOOKBACK_DAYS)
     daily_loads = build_daily_load_series(hevy_workouts, start, target, cardio_sessions=cardio_sessions)
-    acute = acwr_mod.compute_acute_load(daily_loads, window=ACWR_CFG.acute_window)
-    chronic = acwr_mod.compute_chronic_load(daily_loads, window=ACWR_CFG.chronic_window,
-                                            use_ewma=ACWR_CFG.chronic_use_ewma)
+    acute = acwr_mod.compute_acute_load(daily_loads, window=settings.ACWR.acute_window)
+    chronic = acwr_mod.compute_chronic_load(daily_loads, window=settings.ACWR.chronic_window,
+                                            use_ewma=settings.ACWR.chronic_use_ewma)
     acwr_res = acwr_mod.acwr_ratio(acute, chronic)
     rpe_cov = rpe_coverage(hevy_workouts)
     logger.info("ACWR: ratio=%.2f (%s), pokrycie RPE=%.1f%%",

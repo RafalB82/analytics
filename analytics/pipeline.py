@@ -22,7 +22,7 @@ from . import confidence as conf_mod
 from . import explain as explain_mod
 from . import nutrition_adaptive as nutr_mod
 from . import stability as stab_mod
-from .config.settings import ACWR as ACWR_CFG
+from .config import settings
 from .fetch_mfp import to_weight_series
 from .readiness_integration import compute_full_readiness
 from .run_analysis import (
@@ -149,7 +149,7 @@ def confidence_stage(ctx: PipelineContext) -> PipelineContext:
             confidence["tdee"] = c_tdee.to_dict()
     training_days = sum(1 for d in ctx.acwr_info["daily_loads"] if d.load > 0)
     c_acwr = conf_mod.compute_confidence(
-        n_points=training_days, window_days=ACWR_CFG.chronic_window,
+        n_points=training_days, window_days=settings.ACWR.chronic_window,
     )
     if c_acwr:
         confidence["acwr"] = c_acwr.to_dict()

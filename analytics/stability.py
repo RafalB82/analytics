@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .config.settings import STABILITY as _CFG
+from .config import settings
 
 
 @dataclass(frozen=True)
@@ -70,9 +70,9 @@ def activity_stability(values: list[float]) -> ActivityStability | None:
     ref = max(max(avgs), 1.0)
     variation = (max(avgs) - min(avgs)) / ref
 
-    if variation < _CFG.stable_max_variation:
+    if variation < settings.STABILITY.stable_max_variation:
         category = "Stable"
-    elif variation < _CFG.moderate_max_variation:
+    elif variation < settings.STABILITY.moderate_max_variation:
         category = "Moderately Variable"
     else:
         category = "Highly Variable"

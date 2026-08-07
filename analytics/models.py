@@ -91,7 +91,14 @@ class ReadinessResult(BaseModel):
 
 
 class AnalysisReport(BaseModel):
-    """Kompletny raport analizy — kształt outputu run_analysis."""
+    """Kompletny raport analizy — kształt outputu run_analysis.
+
+    Pole sekcji żywieniowej to ``nutrition`` (spójnie z resztą kodu i testami),
+    a NIE ``tdee_adaptive`` — to była rozbieżność między modelem a ``run()``.
+    Pola opcjonalne (confidence / weight_trend / activity_stability / explanations)
+    są domyślnie ``None`` i wchodzą w kolejnych fazach refaktoru 2.0,
+    nie zmieniając istniejących sekcji (wsteczna kompatybilność outputu).
+    """
 
     model_config = ConfigDict(extra="ignore")
 
@@ -102,9 +109,20 @@ class AnalysisReport(BaseModel):
     acwr: dict
     acwr_detail: dict
     temperature: dict
-    tdee_adaptive: dict
+    nutrition: dict
     baseline_trends: dict
     inputs: dict
+
+    # --- nowe sekcje (fazy 2.0), domyślnie None — wstecznie kompatybilne ---
+
+    #: Faza 2 — Confidence Score per metryka: {metric_name: ConfidenceInfo}
+    confidence: dict[str, dict] | None = None
+    #: Faza 4 — Weight Trend (rolling median + slope)
+    weight_trend: dict | None = None
+    #: Faza 3 — Activity Stability (Stable / Moderately Variable / Highly Variable)
+    activity_stability: dict | None = None
+    #: Faza 9 — Explainability: {metric_name: [reason, ...]}
+    explanations: dict[str, list[str]] | None = None
 
 
 __all__ = [

@@ -56,6 +56,7 @@ from .exceptions import InsufficientDataError, InvalidMetricError
 from .fetch_apple import build_apple_input
 from .fetch_hevy import build_daily_load_series, rpe_coverage
 from .logging import get_logger
+from .models import AnalysisReport
 from .readiness_integration import compute_full_readiness
 
 logger = get_logger("run_analysis")
@@ -302,13 +303,13 @@ def run(payload: dict) -> dict[str, Any]:
         trend_hrv = baseline_mod.compute_trend_slope(models["hrv_series"])
         trend_rhr = baseline_mod.compute_trend_slope(models["rhr_series"])
 
-        result = {
-            "status": "ok",
-            "source": source,
-            "target_date": target.isoformat(),
-            "readiness": asdict(readiness),
-            "acwr": asdict(acwr_info["result"]),
-            "acwr_detail": {
+        report = AnalysisReport(
+            status="ok",
+            source=source,
+            target_date=target,
+            readiness=asdict(readiness),
+            acwr=asdict(acwr_info["result"]),
+            acwr_detail={
                 "acute_7d": acwr_info["acute"],
                 "chronic_28d_ewma": acwr_info["chronic"],
                 "rpe_coverage": acwr_info["rpe_coverage"],
@@ -317,13 +318,13 @@ def run(payload: dict) -> dict[str, Any]:
                     for d in acwr_info["daily_loads"][-14:]
                 ],
             },
-            "temperature": _temp_output(temp_alert, models["temp_series"], target),
-            "nutrition": goal_info,
-            "baseline_trends": {
+            temperature=_temp_output(temp_alert, models["temp_series"], target),
+            nutrition=goal_info,
+            baseline_trends={
                 "hrv": (asdict(trend_hrv) if trend_hrv else None),
                 "rhr": (asdict(trend_rhr) if trend_rhr else None),
             },
-            "inputs": {
+            inputs={
                 "apple_points": {
                     "hrv": len(models["hrv_series"]),
                     "rhr": len(models["rhr_series"]),
@@ -334,9 +335,12 @@ def run(payload: dict) -> dict[str, Any]:
                 "hevy_workouts_count": len(hevy_workouts),
                 "mfp_weight_points": len(mfp_weight),
             },
-        }
+        )
+        # Serializacja przez Pydantic (model_dump mode=json) + _json_safe na wszelki
+        # wypadek gdyby zagnieżdżone wartości numpy przeszły przez dict-y (np. ACWR).
+        out = cast(dict[str, Any], _json_safe(report.model_dump(mode="json")))
         logger.info("analiza OK dla %s (strefa %s)", target, readiness.zone)
-        return cast(dict[str, Any], _json_safe(result))
+        return out
 
     except InsufficientDataError as e:
         logger.warning("fallback: %s", e)

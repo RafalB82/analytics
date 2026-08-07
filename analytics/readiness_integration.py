@@ -8,11 +8,17 @@ go opisuje. Zero liczenia po stronie modelu.
 """
 
 from __future__ import annotations
-from dataclasses import dataclass, asdict
 
-from .baseline import MetricPoint, compute_ewma_baseline, compute_trend_slope
+from dataclasses import dataclass
+
 from .acwr import ACWRResult, acwr_readiness_modifier
+from .baseline import MetricPoint, compute_ewma_baseline, compute_trend_slope
+from .config.settings import READINESS as _CFG
+from .exceptions import MissingBaselineError
+from .logging import get_logger
 from .temperature import TempAlert, build_temp_override_message
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -44,29 +50,29 @@ def score_hrv_rhr_sleep(
     """
     score = 0
 
-    if hrv_deviation_pct <= -20:
+    if hrv_deviation_pct <= _CFG.hrv_penalty_high:
         score += 2
-    elif hrv_deviation_pct <= -10:
+    elif hrv_deviation_pct <= _CFG.hrv_penalty_low:
         score += 1
 
-    if rhr_deviation_bpm >= 5:
+    if rhr_deviation_bpm >= _CFG.rhr_penalty_high:
         score += 2
-    elif rhr_deviation_bpm >= 3:
+    elif rhr_deviation_bpm >= _CFG.rhr_penalty_low:
         score += 1
 
     if sleep_hours is not None:
-        if sleep_hours < 5.5:
+        if sleep_hours < _CFG.sleep_penalty_high_h:
             score += 2
-        elif sleep_hours < 6.5:
+        elif sleep_hours < _CFG.sleep_penalty_low_h:
             score += 1
 
     return score
 
 
 def classify_zone(total_score: int) -> tuple[str, str, str]:
-    if total_score <= 1:
+    if total_score <= _CFG.zone_green_max:
         return "zielona", "RPE 9 ostatnia seria / 8 reszta", "pełna objętość"
-    if total_score <= 3:
+    if total_score <= _CFG.zone_yellow_max:
         return "żółta", "max RPE 8 wszędzie", "bez zmian objętości"
     return "czerwona", "max RPE 7 lub regeneracja", "objętość -30-40%"
 
@@ -84,7 +90,10 @@ def compute_full_readiness(
     rhr_baseline = compute_ewma_baseline(rhr_series)
 
     if hrv_baseline is None or rhr_baseline is None:
-        raise ValueError("Za mało danych historycznych na baseline (min. 6 dni)")
+        raise MissingBaselineError("Za mało danych historycznych na baseline (min. 6 dni)")
+
+    logger.info("readiness: HRV dev=%.1f%% RHR dev=%.1f bpm sen=%s",
+                hrv_baseline.deviation_pct, rhr_baseline.deviation_abs, sleep_hours_today)
 
     base = score_hrv_rhr_sleep(
         hrv_deviation_pct=hrv_baseline.deviation_pct,
@@ -122,37 +131,3 @@ def compute_full_readiness(
         trend_note=trend_note,
         sleep_missing=sleep_hours_today is None,
     )
-
-
-if __name__ == "__main__":
-    import json
-    from datetime import date, timedelta
-    from acwr import (
-        SessionLoad, compute_acute_load, compute_chronic_load, acwr_ratio
-    )
-    from temperature import temp_deviation_alert
-
-    today = date.today()
-    days = [today - timedelta(days=i) for i in range(13, -1, -1)]
-
-    # przykładowe dane syntetyczne — podmień na realne fetch_* z Apple Health
-    hrv_series = [MetricPoint(d, v) for d, v in zip(days, [55,54,56,53,52,50,48,47,45,44,43,42,41,38])]
-    rhr_series = [MetricPoint(d, v) for d, v in zip(days, [46,46,45,47,47,48,48,49,49,50,50,51,51,54])]
-
-    daily_loads = [SessionLoad(d, l) for d, l in zip(days, [3200,0,4100,0,3800,0,4500,0,4900,0,5100,0,5300,0])]
-    acute = compute_acute_load(daily_loads, window=7)
-    chronic = compute_chronic_load(daily_loads, window=28)
-    acwr = acwr_ratio(acute, chronic)
-
-    temp_alert = temp_deviation_alert(current=0.4, baseline=0.05, hrv_dropped=True)
-
-    result = compute_full_readiness(
-        hrv_series=hrv_series,
-        rhr_series=rhr_series,
-        sleep_hours_today=5.2,
-        acwr_result=acwr,
-        temp_alert=temp_alert,
-        spo2_confirmed=False,
-    )
-
-    print(json.dumps(asdict(result), ensure_ascii=False, indent=2))

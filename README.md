@@ -21,6 +21,9 @@ analizę i jest **wywoływany ręcznie** (po testach może przejść do cron).
 > pomijana — patrz sekcja ograniczeń.
 
 ## Struktura
+- `config/` — centralna konfiguracja (okna, alphy, progi, zakresy metryk)
+- `validators/` — walidacja metryk wejściowych (NaN/inf/zakres)
+- `exceptions.py` / `logging.py` / `models.py` — wyjątki domenowe, logowanie, modele Pydantic
 - `baseline.py` — rolowany baseline (EWMA) + trend + detekcja przesunięcia normy
 - `acwr.py` — Acute:Chronic Workload Ratio (Gabbett 2016), sRPE-load = tonaż × RPE
 - `temperature.py` — temp. nadgarstka jako twardy override (obecnie brak danych z Apple → no_data)
@@ -29,6 +32,10 @@ analizę i jest **wywoływany ręcznie** (po testach może przejść do cron).
 - `fetch_apple.py` / `fetch_hevy.py` / `fetch_mfp.py` — konwersja danych MCP → moduły
 - `run_analysis.py` — **ręczny orchestrator** (wejście JSON, wyjście JSON)
 - `demo_full.py` — powtarzalny test na danych syntetycznych zbliżonych do realnych
+- `tests/` — 113 testów jednostkowych + integracyjnych; `docs/` — dokumentacja
+
+> Refaktoring jakościowy (konfiguracja, walidacja, wyjątki, logowanie, testy, CI)
+> opisany w `docs/Refactoring.md` — wyniki algorytmiczne bez zmian.
 
 ## Uruchomienie (ręczne)
 Agent (ten MCP) musi najpierw zebrać dane, a następnie przekazać je do skryptu:

@@ -16,10 +16,18 @@ Nie woła MCP samodzielnie — przyjmuje daily[] (listę dict z MCP) i przetwarz
 Dzięki temu jest deterministyczny i testowalny offline.
 """
 from __future__ import annotations
+
 from datetime import date
 from typing import Any
 
 from .baseline import MetricPoint
+from .logging import get_logger
+from .validators import hrv as _val_hrv
+from .validators import rhr as _val_rhr
+from .validators import sleep as _val_sleep
+from .validators import temperature as _val_temp
+
+logger = get_logger(__name__)
 
 
 def _d(d: dict) -> date:
@@ -27,23 +35,25 @@ def _d(d: dict) -> date:
 
 
 def to_hrv_series(daily: list[dict]) -> list[MetricPoint]:
-    """HRV (ms) jako szereg MetricPoint. Pomija dni z None."""
+    """HRV (ms) jako szereg MetricPoint. Pomija dni z None; waliduje zakres (rzuca InvalidMetricError)."""
     out = []
     for d in daily:
         v = d.get("heart_rate_variability")
-        if v is not None:
-            out.append(MetricPoint(day=_d(d), value=float(v)))
+        if v is None:
+            continue
+        out.append(MetricPoint(day=_d(d), value=_val_hrv(v) or 0.0))
     out.sort(key=lambda p: p.day)
     return out
 
 
 def to_rhr_series(daily: list[dict]) -> list[MetricPoint]:
-    """RHR (bpm) jako szereg MetricPoint. Pomija dni z None."""
+    """RHR (bpm) jako szereg MetricPoint. Pomija dni z None; waliduje zakres."""
     out = []
     for d in daily:
         v = d.get("resting_heart_rate")
-        if v is not None:
-            out.append(MetricPoint(day=_d(d), value=float(v)))
+        if v is None:
+            continue
+        out.append(MetricPoint(day=_d(d), value=_val_rhr(v) or 0.0))
     out.sort(key=lambda p: p.day)
     return out
 
@@ -54,7 +64,7 @@ def to_sleep_hours(daily: list[dict], target_date: date) -> float | None:
         if _d(d) == target_date:
             s = d.get("sleep") or {}
             v = s.get("total_hours")
-            return float(v) if v is not None else None
+            return _val_sleep(v) if v is not None else None
     return None
 
 
@@ -72,7 +82,7 @@ def to_temp_series(daily: list[dict]) -> list[Any]:
     for d in daily:
         v = d.get("apple_sleeping_wrist_temperature")
         if v is not None:
-            out.append(TempPoint(day=_d(d), wrist_temp_c=float(v)))
+            out.append(TempPoint(day=_d(d), wrist_temp_c=_val_temp(v) or 0.0))
     out.sort(key=lambda p: p.day)
     return out
 
@@ -90,7 +100,7 @@ def to_temp_series_from_points(temp_points: list[dict]) -> list[Any]:
         d = p.get("date")
         if v is None or d is None:
             continue
-        out.append(TempPoint(day=date.fromisoformat(str(d)[:10]), wrist_temp_c=float(v)))
+        out.append(TempPoint(day=date.fromisoformat(str(d)[:10]), wrist_temp_c=_val_temp(v) or 0.0))
     out.sort(key=lambda p: p.day)
     return out
 
@@ -110,7 +120,6 @@ def build_apple_input(
     (name='apple_sleeping_wrist_temperature') — osobne źródło, bo seria
     dzienna (get_daily_activity_range) nie zawiera temperatury.
     """
-    from datetime import timedelta
 
     target_date = target_date or (daily[-1]["date"] if daily else date.today())
     tdate = target_date if isinstance(target_date, date) else date.fromisoformat(str(target_date)[:10])
@@ -124,10 +133,16 @@ def build_apple_input(
 
 
 if __name__ == "__main__":
-    import json, sys
+    import json
+    import sys
     if len(sys.argv) < 2:
         print("usage: python3 -m analytics.fetch_apple '<daily_json>' [target_date]")
         sys.exit(0)
     daily = json.loads(sys.argv[1])
-    target = sys.argv[2] if len(sys.argv) > 2 else None
-    print(json.dumps(build_apple_input(daily, target), ensure_ascii=False, indent=2, default=str))
+    raw_target = sys.argv[2] if len(sys.argv) > 2 else None
+    if raw_target:
+        from datetime import date as _date
+        target_date_arg: date | None = _date.fromisoformat(raw_target)
+    else:
+        target_date_arg = None
+    print(json.dumps(build_apple_input(daily, target_date_arg), ensure_ascii=False, indent=2, default=str))

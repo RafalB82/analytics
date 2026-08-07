@@ -7,9 +7,16 @@ Zależności: numpy
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import date
+
 import numpy as np
+
+from .config.settings import BASELINE as _CFG
+from .logging import get_logger
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -37,8 +44,8 @@ class TrendResult:
 
 def compute_ewma_baseline(
     series: list[MetricPoint],
-    alpha: float = 0.1,
-    min_points: int = 5,
+    alpha: float = _CFG.ewma_alpha,
+    min_points: int = _CFG.min_points,
 ) -> BaselineResult | None:
     """
     Wykładniczo ważona średnia krocząca jako baseline.
@@ -49,10 +56,13 @@ def compute_ewma_baseline(
     = dzień, dla którego liczysz odchylenie (nie wchodzi do baseline).
     """
     if len(series) < min_points + 1:
+        logger.debug("za mało punktów do baseline: %d (min %d)", len(series), min_points + 1)
         return None
 
     history = series[:-1]          # wszystko poza dniem bieżącym
     current = series[-1].value
+
+    logger.debug("baseline EWMA: %d punktów historii (min %d)", len(history), min_points)
 
     values = np.array([p.value for p in history], dtype=float)
     ewma = values[0]
@@ -73,8 +83,8 @@ def compute_ewma_baseline(
 def baseline_by_context(
     series: list[MetricPoint],
     current_is_training_day: bool,
-    alpha: float = 0.1,
-    min_points: int = 4,
+    alpha: float = _CFG.ewma_alpha,
+    min_points: int = _CFG.min_points_context,
 ) -> BaselineResult | None:
     """
     Osobny baseline dla dni treningowych i nietreningowych.
@@ -89,9 +99,9 @@ def baseline_by_context(
 
 def compute_trend_slope(
     series: list[MetricPoint],
-    window_days: int = 7,
-    smoothing_window: int = 3,
-    min_r_squared: float = 0.3,
+    window_days: int = _CFG.trend_window_days,
+    smoothing_window: int = _CFG.trend_smoothing,
+    min_r_squared: float = _CFG.trend_min_r_squared,
 ) -> TrendResult | None:
     """
     Regresja liniowa na oknie window_days (domyślnie ostatnie 7 dni),
@@ -122,7 +132,7 @@ def compute_trend_slope(
     ss_tot = np.sum((smoothed - np.mean(smoothed)) ** 2)
     r_squared = 1 - ss_res / ss_tot if ss_tot != 0 else 0.0
 
-    reliable = r_squared >= min_r_squared
+    reliable = bool(r_squared >= min_r_squared)
 
     if not reliable:
         direction = "stabilny"
@@ -144,9 +154,9 @@ def compute_trend_slope(
 def detect_baseline_shift(
     short_series: list[MetricPoint],
     long_series: list[MetricPoint],
-    threshold_pct: float = 8.0,
-    alpha_short: float = 0.2,
-    alpha_long: float = 0.05,
+    threshold_pct: float = _CFG.shift_threshold_pct,
+    alpha_short: float = _CFG.shift_alpha_short,
+    alpha_long: float = _CFG.shift_alpha_long,
 ) -> bool:
     """
     Porównanie EWMA(krótkie, ~7d) vs EWMA(długie, ~28d).
@@ -162,4 +172,4 @@ def detect_baseline_shift(
         return False
 
     diff_pct = abs(short_bl.baseline - long_bl.baseline) / long_bl.baseline * 100
-    return diff_pct > threshold_pct
+    return bool(diff_pct > threshold_pct)

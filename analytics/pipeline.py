@@ -13,12 +13,13 @@ kroki z run_analysis.run(). Determinizm outputu pozostaje nietknięty.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import date
 from typing import Any
 
 from . import baseline as baseline_mod
 from . import confidence as conf_mod
+from . import explain as explain_mod
 from . import nutrition_adaptive as nutr_mod
 from . import stability as stab_mod
 from .config.settings import ACWR as ACWR_CFG
@@ -61,6 +62,7 @@ class PipelineContext:
     activity_vals: list = field(default_factory=list)
     activity_stability: Any = None
     weight_trend: dict | None = None
+    explanations: dict[str, list[str]] = field(default_factory=dict)
 
     # wyjście
     report: Any = None
@@ -164,10 +166,40 @@ def confidence_stage(ctx: PipelineContext) -> PipelineContext:
     return ctx
 
 
+def explain_stage(ctx: PipelineContext) -> PipelineContext:
+    """Stage: Explainability Layer (faza 9.0) — reason[] per metryka dla LLM."""
+    m = ctx.models
+
+    # deviacje HRV/RHR względem baseline (tak jak liczy readiness)
+    hrv_dev = rhr_dev = None
+    hrv_bl = baseline_mod.compute_ewma_baseline(m["hrv_series"])
+    rhr_bl = baseline_mod.compute_ewma_baseline(m["rhr_series"])
+    if hrv_bl is not None:
+        hrv_dev = hrv_bl.deviation_pct
+    if rhr_bl is not None:
+        rhr_dev = rhr_bl.deviation_abs
+
+    trend_note = getattr(ctx.readiness, "trend_note", None)
+    sleep_missing = getattr(ctx.readiness, "sleep_missing", False)
+    rpe_cov = ctx.acwr_info.get("rpe_coverage")
+    assert ctx.target is not None
+
+    ctx.explanations = explain_mod.build_explanations(
+        hrv_deviation_pct=hrv_dev,
+        rhr_deviation_bpm=rhr_dev,
+        sleep_hours=m.get("sleep_hours_today"),
+        sleep_missing=sleep_missing,
+        trend_note=trend_note,
+        acwr=asdict(ctx.acwr_info["result"]),
+        rpe_coverage=rpe_cov,
+        temperature=_temp_output(ctx.temp_alert, m["temp_series"], ctx.target),
+        goal=ctx.goal_info,
+    )
+    return ctx
+
+
 def serialization_stage(ctx: PipelineContext) -> PipelineContext:
     """Stage 5: złożenie AnalysisReport + (kwazi)serializacja."""
-    from dataclasses import asdict
-
     from .models import AnalysisReport
 
     m = ctx.models
@@ -198,6 +230,7 @@ def serialization_stage(ctx: PipelineContext) -> PipelineContext:
         activity_stability=(
             ctx.activity_stability.to_dict() if ctx.activity_stability else None
         ),
+        explanations=ctx.explanations or None,
         inputs={
             "apple_points": {
                 "hrv": len(m["hrv_series"]),
@@ -238,6 +271,7 @@ PIPELINE = AnalyticsPipeline(
         model_building_stage,
         analytics_stage,
         confidence_stage,
+        explain_stage,
         serialization_stage,
     )
 )
@@ -251,5 +285,6 @@ __all__ = [
     "model_building_stage",
     "analytics_stage",
     "confidence_stage",
+    "explain_stage",
     "serialization_stage",
 ]

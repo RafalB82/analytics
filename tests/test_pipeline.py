@@ -7,6 +7,7 @@ from analytics.pipeline import (
     PipelineContext,
     analytics_stage,
     confidence_stage,
+    explain_stage,
     input_validation_stage,
     model_building_stage,
     serialization_stage,
@@ -56,6 +57,9 @@ class TestPipeline:
 
         ctx = confidence_stage(ctx)
         assert ctx.confidence  # non-empty
+
+        ctx = explain_stage(ctx)
+        assert ctx.explanations  # non-empty
 
         ctx = serialization_stage(ctx)
         assert ctx.report is not None

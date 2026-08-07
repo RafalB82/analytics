@@ -13,10 +13,14 @@ deterministyczną i testowalną bez zależności od MCP w środku.
 Zależności: numpy (przez .acwr)
 """
 from __future__ import annotations
+
 from datetime import date, datetime
 from typing import Any
 
 from .acwr import SessionLoad, compute_session_load
+from .logging import get_logger
+
+logger = get_logger(__name__)
 
 # Typy serii pomijane w liczeniu tonażu (rozgrzewki / serie bez obciążenia)
 SKIP_SET_TYPES = {"warmup"}
@@ -26,12 +30,12 @@ SKIP_SET_TYPES = {"warmup"}
 DISTANCE_BASED = False
 
 
-def _parse_date(iso: str) -> date:
+def _parse_date(iso: Any) -> date:
     """ISO 8601 (z 'Z' lub offset) -> date. Bezpiecznie dla endTime/null."""
     if not iso:
         return date.today()
     # obetnij offset strefowy / 'Z' i część ułamkową
-    s = iso[:10]
+    s = str(iso)[:10]
     return datetime.strptime(s, "%Y-%m-%d").date()
 
 
@@ -47,9 +51,19 @@ def _set_load(s: dict) -> float | None:
     reps = s.get("reps")
     if weight is None or reps is None or weight == 0:
         return None
+    # sanity-check: odrzucamy ewidentnie zepsute wartości (nie legalne pominięcie)
+    try:
+        weight_f = float(weight)
+        reps_f = int(reps)
+    except (TypeError, ValueError):
+        return None
+    if weight_f <= 0 or reps_f <= 0:
+        return None
+    if weight_f > 1000 or reps_f > 1000:  # absurdalne — uszkodzone dane
+        return None
     rpe = s.get("rpe")
     # compute_session_load(sets, reps, weight_kg, rpe); sets=1 (per seria)
-    return compute_session_load(sets=1, reps=reps, weight_kg=weight, rpe=rpe)
+    return compute_session_load(sets=1, reps=reps_f, weight_kg=weight_f, rpe=rpe)
 
 
 def workout_daily_load(workout: dict) -> tuple[date, float] | None:
@@ -154,7 +168,8 @@ def fetch_workouts_impl(
 
 
 if __name__ == "__main__":
-    import json, sys
+    import json
+    import sys
     # Użycie testowe: python3 -m analytics.fetch_hevy '<json_treningow>' <start> <end>
     if len(sys.argv) < 4:
         print("usage: python3 -m analytics.fetch_hevy '<workouts_json>' <start> <end>")

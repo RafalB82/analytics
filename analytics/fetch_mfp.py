@@ -10,10 +10,11 @@ Nie woła MCP samodzielnie — przyjmuje listę punktów wagowych i konwertuje
 na WeightPoint dla nutrition_adaptive.compute_weight_trend.
 """
 from __future__ import annotations
+
 from datetime import date
-from typing import Any
 
 from .nutrition_adaptive import WeightPoint
+from .validators import weight as _val_weight
 
 
 def to_weight_series(mfp_weight_rows: list[dict]) -> list[WeightPoint]:
@@ -27,9 +28,8 @@ def to_weight_series(mfp_weight_rows: list[dict]) -> list[WeightPoint]:
         d = r.get("date")
         if v is None or d is None:
             continue
-        try:
-            wt = float(v)
-        except (TypeError, ValueError):
+        wt = _val_weight(v)
+        if wt is None:
             continue
         out.append(WeightPoint(day=date.fromisoformat(str(d)[:10]), weight_kg=wt))
     out.sort(key=lambda p: p.day)
@@ -37,7 +37,8 @@ def to_weight_series(mfp_weight_rows: list[dict]) -> list[WeightPoint]:
 
 
 if __name__ == "__main__":
-    import json, sys
+    import json
+    import sys
     if len(sys.argv) < 2:
         print("usage: python3 -m analytics.fetch_mfp '<weight_rows_json>'")
         sys.exit(0)

@@ -11,9 +11,16 @@ Zależności: numpy
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import date
+
 import numpy as np
+
+from .config.settings import TEMPERATURE as _CFG
+from .logging import get_logger
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -32,7 +39,7 @@ class TempAlert:
     combined_with_hrv_drop: bool = False
 
 
-def compute_temp_baseline(series: list[TempPoint], window: int = 14) -> float:
+def compute_temp_baseline(series: list[TempPoint], window: int = _CFG.baseline_window) -> float:
     """
     Baseline nocnej temperatury nadgarstka.
     Uwaga: HealthKit zwraca już wartość jako odchylenie od bazowej
@@ -50,7 +57,7 @@ def compute_temp_baseline(series: list[TempPoint], window: int = 14) -> float:
 def temp_deviation_alert(
     current: float,
     baseline: float,
-    threshold_c: float = 0.3,
+    threshold_c: float = _CFG.threshold_c,
     hrv_dropped: bool = False,
 ) -> TempAlert:
     """
@@ -68,10 +75,12 @@ def temp_deviation_alert(
 
     if not triggered:
         severity = "brak"
-    elif deviation >= threshold_c * 1.5 or (triggered and hrv_dropped):
+    elif deviation >= threshold_c * _CFG.significant_multiplier or (triggered and hrv_dropped):
         severity = "znacząca"
     else:
         severity = "podwyższona"
+
+    logger.debug("temp alert: dev=%.3f prog=%.2f triggered=%s severity=%s", deviation, threshold_c, triggered, severity)
 
     return TempAlert(
         triggered=triggered,

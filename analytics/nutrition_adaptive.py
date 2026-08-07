@@ -7,11 +7,19 @@ Zależności: numpy
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import date
+
 import numpy as np
 
-KCAL_PER_KG_FAT = 7700  # standardowa wartość energetyczna 1 kg tkanki tłuszczowej
+from .config.settings import NUTRITION as _CFG
+from .logging import get_logger
+
+logger = get_logger(__name__)
+
+#: standardowa wartość energetyczna 1 kg tkanki tłuszczowej (kcal) — z configu
+KCAL_PER_KG_FAT = _CFG.kcal_per_kg_fat
 
 
 @dataclass
@@ -31,8 +39,8 @@ class TDEEAdjustment:
 
 def compute_weight_trend(
     series: list[WeightPoint],
-    window_days: int = 14,
-    min_points: int = 8,
+    window_days: int = _CFG.weight_trend_window_days,
+    min_points: int = _CFG.weight_min_points,
 ) -> float | None:
     """
     Trend liniowy wagi w kg/dzień na oknie window_days.
@@ -42,6 +50,7 @@ def compute_weight_trend(
     """
     recent = series[-window_days:]
     if len(recent) < min_points:
+        logger.debug("za mało punktów wagi do trendu: %d (min %d)", len(recent), min_points)
         return None
 
     x = np.arange(len(recent))
@@ -54,7 +63,7 @@ def adjust_tdee(
     current_tdee: float,
     weight_trend_kg_per_day: float | None,
     target_trend_kg_per_week: float = 0.0,
-    max_single_adjustment_kcal: float = 250,
+    max_single_adjustment_kcal: float = _CFG.max_single_adjustment_kcal,
 ) -> TDEEAdjustment:
     """
     Korekta TDEE na podstawie rzeczywistej zmiany wagi vs cel.
@@ -89,7 +98,7 @@ def adjust_tdee(
 
     new_tdee = round(current_tdee + adjustment, 0)
 
-    confidence = "wysoka" if abs(trend_gap) > 0.1 else "średnia"
+    confidence = "wysoka" if abs(trend_gap) > _CFG.confidence_gap_kg_per_week else "średnia"
 
     return TDEEAdjustment(
         old_tdee=current_tdee,
@@ -110,10 +119,6 @@ def compute_protein_target(
     ISSN position stand) — deficyt wymaga górnej granicy ze względu
     na ochronę masy mięśniowej.
     """
-    ranges = {
-        "deficyt": 2.2,
-        "utrzymanie": 1.8,
-        "nadwyżka": 1.8,
-    }
-    g_per_kg = ranges.get(phase, 1.8)
+    ranges = _CFG.protein_g_per_kg
+    g_per_kg = float(ranges.get(phase, 1.8))
     return round(bodyweight_kg * g_per_kg, 0)

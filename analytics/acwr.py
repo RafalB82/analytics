@@ -10,9 +10,16 @@ Zależności: numpy
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import date
+
 import numpy as np
+
+from .config.settings import ACWR as _CFG
+from .logging import get_logger
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -70,19 +77,20 @@ def fill_missing_days(daily_loads: dict[date, float], start: date, end: date) ->
     return result
 
 
-def compute_acute_load(daily_series: list[SessionLoad], window: int = 7) -> float:
+def compute_acute_load(daily_series: list[SessionLoad], window: int = _CFG.acute_window) -> float:
     """Średnia dzienna z ostatnich `window` dni (nie suma — łatwiej interpretować i porównywać z chronic)."""
     recent = daily_series[-window:]
     if not recent:
         return 0.0
+    logger.debug("cumulate_acute: %d dni, śr. %.1f", len(recent), np.mean([p.load for p in recent]))
     return round(float(np.mean([p.load for p in recent])), 1)
 
 
 def compute_chronic_load(
     daily_series: list[SessionLoad],
-    window: int = 28,
-    use_ewma: bool = True,
-    alpha: float = 0.05,
+    window: int = _CFG.chronic_window,
+    use_ewma: bool = _CFG.chronic_use_ewma,
+    alpha: float = _CFG.chronic_alpha,
 ) -> float:
     """
     Średnia dzienna z ostatnich `window` dni.
@@ -106,19 +114,18 @@ def compute_chronic_load(
 
 def acwr_ratio(acute: float, chronic: float) -> ACWRResult:
     """Klasyfikacja strefy ryzyka na podstawie stosunku acute/chronic."""
-    if chronic == 0:
-        ratio = 0.0
-    else:
-        ratio = round(acute / chronic, 2)
+    ratio = 0.0 if chronic == 0 else round(acute / chronic, 2)
 
-    if ratio < 0.8:
+    if ratio < _CFG.zone_low:
         zone = "niedociążenie"
-    elif ratio <= 1.3:
+    elif ratio <= _CFG.zone_optimal_high:
         zone = "optymalna"
-    elif ratio <= 1.5:
+    elif ratio <= _CFG.zone_elevated_high:
         zone = "podwyższone ryzyko"
     else:
         zone = "wysokie ryzyko"
+
+    logger.info("ACWR: acute=%.1f chronic=%.1f ratio=%.2f strefa=%s", acute, chronic, ratio, zone)
 
     return ACWRResult(acute_load=acute, chronic_load=chronic, ratio=ratio, zone=zone)
 

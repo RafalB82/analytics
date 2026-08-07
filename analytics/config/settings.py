@@ -209,8 +209,8 @@ class MetricRanges:
     sleep: tuple[float, float] = (2.0, 18.0)
     #: temperatura nadgarstka (°C)
     temperature: tuple[float, float] = (34.0, 42.0)
-    #: waga (kg)
-    weight: tuple[float, float] = (20.0, 400.0)
+    #: waga (kg) — realistyczny zakres człowieka dorosłego (nie kilkulatka ani słonia)
+    weight: tuple[float, float] = (40.0, 200.0)
     #: tonaż pojedynczej serii (kg) — ciężar ujemny/zera wykluczamy w fetch
     set_weight_non_negative: bool = True
 

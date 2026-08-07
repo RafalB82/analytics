@@ -193,19 +193,24 @@ class TestParseInput:
 
 class TestValidateInput:
     def test_valid_payload(self):
-        source, target, params, apple_daily, hevy, cardio, mfp, temp = validate_input(_payload())
+        source, target, params, apple_daily, hevy, apple_w, cardio, mfp, temp = validate_input(_payload())
         assert source == "apple+hevy+mfp"
         assert target == date(2026, 8, 7)
         assert cardio == []  # domyślnie brak sesji cardio
+        assert apple_w == []  # domyślnie brak workoutów Apple
 
     def test_payload_with_cardio(self):
         p = _payload()
         p["cardio_sessions"] = [
             {"startTime": "2026-08-06T08:00:00", "duration_minutes": 90, "rpe": 6}
         ]
-        source, target, params, apple_daily, hevy, cardio, mfp, temp = validate_input(p)
+        p["apple_workouts"] = [{"name": "Outdoor Cycling", "start": "2026-08-06T08:00:00",
+                                 "duration_min": 90, "avg_heart_rate_bpm": 140}]
+        source, target, params, apple_daily, hevy, apple_w, cardio, mfp, temp = validate_input(p)
         assert len(cardio) == 1
         assert cardio[0]["rpe"] == 6
+        assert len(apple_w) == 1
+        assert apple_w[0]["name"] == "Outdoor Cycling"
 
     def test_bad_source_raises(self):
         import pytest

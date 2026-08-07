@@ -83,6 +83,11 @@ python -m analytics.run_analysis '<json>'  # ręczny orchestrator
 > skala TRIMP (setki) różni się od tonażu z Hevy (tysiące). Siłowe/kalisteniczne z Apple są
 > odrzucane — siła pochodzi wyłącznie z Hevy (zero dubli). Oba ACWR łączone na poziomie
 > gotowości zestawem `acwr_combined_modifier` (maksimum stref).
+>
+> TRIMP: `hr_max` brane z danej sesji (`max_heart_rate_bpm`), gdy dostępne — pełniejszy obraz
+> pułapu osiągniętego w tej aktywności; `hr_rest` zawsze z configu (poranne spoczynkowe).
+> Klasyfikacja cardio ma czarną listę siłowych słów kluczowych z pierwszeństwem, więc custom
+> nazwa typu "Walking Lunges" nie zostanie błędnie uznana za cardio.
 
 > `phase` = aktualny cel: `utrzymanie` (marża 0) / `redukcja` (−15%) / `masa` (+10%).
 > `bodyweight_kg` opcjonalny (gdy brak punktu wagi z Apple w danym dniu).

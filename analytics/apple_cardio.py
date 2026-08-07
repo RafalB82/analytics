@@ -77,10 +77,25 @@ def is_cardio_workout(workout: dict) -> bool:
     wyklucza dubl z Hevy (siła wyłącznie z Hevy).
     """
     name = _normalize_type(workout.get("name") or workout.get("workout_type") or workout.get("type"))
-    # dopasowanie po pełnej nazwie
+
+    # 1) CZARNA lista siłowych/kalistenicznych słów kluczowych — MA PIERWSZEŃSTWO.
+    # Chroni przed false-positive cardio, gdy custom nazwa zawiera cardio-słowo
+    # (np. "Walking Lunges" ma "walk", ale to ćwiczenie siłowe). Nawet gdyby pole
+    # name kiedykolwiek zawierało custom tekst, te frazy wykluczają cardio.
+    _STRENGTH_KEYWORDS = (
+        "strength", "lunge", "lunges", "press", "curl", "curls", "deadlift",
+        "squat", "bench", "pull-up", "pull up", "push-up", "push up", "dip",
+        "dips", "fly", "flies", "extension", "raises", "raise",
+        "crunch", "plank", "weight", "barbell", "dumbbell", "kettlebell",
+        "functional strength", "cross training", "bodyweight workout",
+    )
+    if any(kw in name for kw in _STRENGTH_KEYWORDS):
+        return False
+
+    # 2) dopasowanie po pełnej nazwie (zamknięty enum kategorii Apple)
     if name in APPLE_CARDIO_TYPES:
         return True
-    # dopasowanie po słowie kluczowym (np. "Outdoor Cycling" -> "cycling")
+    # 3) dopasowanie po słowie kluczowym (np. "Outdoor Cycling" -> "cycling")
     for kw in ("cycling", "rowing", "running", "walk", "walking", "swimming", "hiking",
                "elliptical", "stepper", "stair", "treadmill", "cardio", "ergometer"):
         if kw in name:
@@ -135,17 +150,25 @@ def apple_workout_daily_load(workout: dict) -> tuple[date, float] | None:
     Obciążenie (TRIMP) jednej sesji cardio z Apple Watch, przypięte do dnia.
     Odrzuca workouty siłowe (patrz is_cardio_workout) oraz brakujące dane.
     Zwraca (day, trimp) lub None gdy nie cardio / brak avg_hr / czasu.
+
+    hr_max (mianownik Banistera) bierzemy z danej sesji treningowej
+    (max_heart_rate_bpm), jeśli jest dostępny — pełniejszy, realny obraz
+    pułapu osiągniętego w tej aktywności. Gdy brak, pada na config
+    (ACWRSettings.hr_max_default). hr_rest zawsze z configu (poranne
+    spoczynkowe — niezmienne per sesja).
     """
     if not is_cardio_workout(workout):
         logger.debug("apple workout nie-cardio (pominięty): %s", workout.get("name"))
         return None
 
     avg_hr = workout.get("avg_heart_rate_bpm")
+    max_hr = workout.get("max_heart_rate_bpm")  # per-sesja, opcjonalnie
     duration = workout.get("duration_min") or workout.get("duration_s")
     if avg_hr is None or duration is None:
         return None
     try:
         avg_hr_f = float(avg_hr)
+        max_hr_f = float(max_hr) if max_hr is not None else None
         duration_f = float(duration)
         if workout.get("duration_s") is not None and workout.get("duration_min") is None:
             duration_f = duration_f / 60.0  # sekundy -> minuty
@@ -153,9 +176,16 @@ def apple_workout_daily_load(workout: dict) -> tuple[date, float] | None:
         return None
     if avg_hr_f <= 0 or duration_f <= 0:
         return None
+    # patologiczne max_hr (<= spoczynkowe) — odrzuć sesję, nie wywalaj pipeline
+    if max_hr_f is not None and max_hr_f <= 0:
+        return None
 
     day = _parse_date(workout.get("start") or workout.get("startTime"))
-    trimp = compute_trimp_session_load(avg_hr_f, duration_f)
+    try:
+        trimp = compute_trimp_session_load(avg_hr_f, duration_f, hr_max=max_hr_f)
+    except ValueError:
+        logger.debug("apple cardio: odrzucono sesję z niepoprawnym tętnem (max=%.1f)", max_hr_f)
+        return None
     return day, round(trimp, 1)
 
 

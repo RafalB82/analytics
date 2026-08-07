@@ -45,6 +45,7 @@ class PipelineContext:
     params: dict = field(default_factory=dict)
     apple_daily: list = field(default_factory=list)
     hevy_workouts: list = field(default_factory=list)
+    cardio_sessions: list = field(default_factory=list)
     mfp_weight: list = field(default_factory=list)
     apple_temp: list = field(default_factory=list)
 
@@ -74,9 +75,10 @@ class PipelineContext:
 def input_validation_stage(ctx: PipelineContext) -> PipelineContext:
     """Stage 1: walidacja wejścia + rozbicie payloadu."""
     (ctx.source, ctx.target, ctx.params, ctx.apple_daily,
-     ctx.hevy_workouts, ctx.mfp_weight, ctx.apple_temp) = validate_input(
+     ctx.hevy_workouts, ctx.cardio_sessions, ctx.mfp_weight, ctx.apple_temp) = validate_input(
         {"source": ctx.source, "target_date": ctx.target,
          "apple_daily": ctx.apple_daily, "hevy_workouts": ctx.hevy_workouts,
+         "cardio_sessions": ctx.cardio_sessions,
          "mfp_weight": ctx.mfp_weight, "apple_temp": ctx.apple_temp,
          "params": ctx.params})
     return ctx
@@ -86,7 +88,7 @@ def model_building_stage(ctx: PipelineContext) -> PipelineContext:
     """Stage 2: budowa modeli / serii analitycznych (Apple + Hevy)."""
     assert ctx.target is not None, "target nie ustawiony po walidacji"
     ctx.models = build_apple_models(ctx.apple_daily, ctx.target, ctx.apple_temp)
-    ctx.acwr_info = build_acwr(ctx.hevy_workouts, ctx.target)
+    ctx.acwr_info = build_acwr(ctx.hevy_workouts, ctx.target, cardio_sessions=ctx.cardio_sessions)
     return ctx
 
 

@@ -39,7 +39,7 @@ class TempAlert:
     combined_with_hrv_drop: bool = False
 
 
-def compute_temp_baseline(series: list[TempPoint], window: int = _CFG.baseline_window) -> float:
+def compute_temp_baseline(series: list[TempPoint], window: int | None = None) -> float:
     """
     Baseline nocnej temperatury nadgarstka.
     Uwaga: HealthKit zwraca już wartość jako odchylenie od bazowej
@@ -48,6 +48,8 @@ def compute_temp_baseline(series: list[TempPoint], window: int = _CFG.baseline_w
     raczej do wygładzenia szumu niż wyznaczenia nowej normy od zera.
     Jeśli pobierasz bezwzględną temperaturę, licz normalnie.
     """
+    if window is None:
+        window = _CFG.baseline_window
     recent = [p.wrist_temp_c for p in series[-window:]]
     if not recent:
         return 0.0
@@ -57,7 +59,7 @@ def compute_temp_baseline(series: list[TempPoint], window: int = _CFG.baseline_w
 def temp_deviation_alert(
     current: float,
     baseline: float,
-    threshold_c: float = _CFG.threshold_c,
+    threshold_c: float | None = None,
     hrv_dropped: bool = False,
 ) -> TempAlert:
     """
@@ -70,6 +72,8 @@ def temp_deviation_alert(
     oznacz jako "znacząca" — dwa niezależne sygnały fizjologiczne
     razem znacznie zwiększają pewność, że to nie szum pomiarowy.
     """
+    if threshold_c is None:
+        threshold_c = _CFG.threshold_c
     deviation = round(current - baseline, 3)
     triggered = deviation >= threshold_c
 

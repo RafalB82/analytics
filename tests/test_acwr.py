@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+import pytest
+
 from analytics.acwr import (
     SessionLoad,
     acwr_ratio,
@@ -12,6 +14,11 @@ from analytics.acwr import (
     compute_chronic_load,
     compute_session_load,
     fill_missing_days,
+)
+from analytics.fetch_hevy import (
+    build_daily_load_series,
+    cardio_session_daily_load,
+    compute_cardio_session_load,
 )
 
 
@@ -112,3 +119,67 @@ class TestReadinessModifier:
     def test_optimal_adds_0(self):
         res = acwr_ratio(acute=100, chronic=100)
         assert acwr_readiness_modifier(res) == 0
+
+
+class TestCardioSessionLoad:
+    """Obciążenie cardio (MTB) w tej samej skali co tonaż (audyt #3)."""
+
+    def test_duration_times_rpe(self):
+        assert compute_cardio_session_load(duration_minutes=90, rpe=6) == 540.0
+
+    def test_shorter_lighter_session(self):
+        assert compute_cardio_session_load(duration_minutes=45, rpe=4) == 180.0
+
+    def test_invalid_duration_raises(self):
+        import pytest
+        with pytest.raises(ValueError):
+            compute_cardio_session_load(duration_minutes=0, rpe=6)
+
+    def test_invalid_rpe_raises(self):
+        import pytest
+        with pytest.raises(ValueError):
+            compute_cardio_session_load(duration_minutes=90, rpe=11)
+
+    def test_cardio_session_daily_load(self):
+        day, load = cardio_session_daily_load(
+            {"startTime": "2026-08-06T08:00:00", "duration_minutes": 90, "rpe": 6}
+        )
+        assert day == date(2026, 8, 6)
+        assert load == 540.0
+
+    def test_cardio_session_missing_fields_returns_none(self):
+        assert cardio_session_daily_load({"startTime": "2026-08-06T08:00:00"}) is None
+
+    def test_cardio_merged_into_daily_load_series(self):
+        """Sesja cardio sumuje się z tonażem Hevy tego samego dnia (audyt #3)."""
+        today = date(2026, 8, 7)
+        start = today - timedelta(days=14)
+        hevy = [
+            {"startTime": str(today - timedelta(days=1)) + "T18:00:00",
+             "exercises": [{"sets": [{"type": "normal", "reps": 5, "weight": 100.0, "rpe": 8}]}]},
+        ]
+        cardio = [
+            {"startTime": str(today - timedelta(days=1)) + "T08:00:00",
+             "duration_minutes": 90, "rpe": 6},
+            # poza oknem — pomijana
+            {"startTime": str(today - timedelta(days=40)) + "T08:00:00",
+             "duration_minutes": 120, "rpe": 7},
+        ]
+        series = build_daily_load_series(hevy, start, today, cardio_sessions=cardio)
+        by_day = {s.day: s.load for s in series}
+        # tonaż 5*100*8=4000 + cardio 90*6=540 -> 4540 tego dnia
+        assert by_day[today - timedelta(days=1)] == pytest.approx(4000 + 540, abs=0.1)
+        # sesja cardio poza oknem nie weszła do serii (poza start..end)
+        assert (today - timedelta(days=40)) not in by_day
+
+    def test_cardio_only_day(self):
+        """Dzień bez siłowni, tylko MTB — load z samego cardio."""
+        today = date(2026, 8, 7)
+        start = today - timedelta(days=14)
+        cardio = [
+            {"startTime": str(today - timedelta(days=2)) + "T08:00:00",
+             "duration_minutes": 60, "rpe": 5},
+        ]
+        series = build_daily_load_series([], start, today, cardio_sessions=cardio)
+        by_day = {s.day: s.load for s in series}
+        assert by_day[today - timedelta(days=2)] == 300.0

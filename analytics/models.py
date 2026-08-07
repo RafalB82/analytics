@@ -48,6 +48,16 @@ class DailyMetrics(BaseModel):
     height: float | None = Field(default=None, ge=0)
 
 
+class TempAlertPayload(BaseModel):
+    """Serializowalny kształt alertu temperatury (bez atrybutów wewnętrznych)."""
+
+    triggered: bool
+    deviation_c: float
+    baseline_c: float
+    severity: str
+    combined_with_hrv_drop: bool = False
+
+
 class TempAlertStatus(BaseModel):
     """Status alertu temperatury nadgarstka — typowany zamiennik dict + `_temp_alert_obj`."""
 
@@ -62,16 +72,6 @@ class TempAlertStatus(BaseModel):
 
     #: pole przenoszące obiekt TempAlert (temp_alert.py) do readiness — bez dict-hacka
     temp_alert_obj: object | None = Field(default=None, exclude=True)
-
-
-class TempAlertPayload(BaseModel):
-    """Serializowalny kształt alertu temperatury (bez atrybutów wewnętrznych)."""
-
-    triggered: bool
-    deviation_c: float
-    baseline_c: float
-    severity: str
-    combined_with_hrv_drop: bool = False
 
 
 class ReadinessResult(BaseModel):

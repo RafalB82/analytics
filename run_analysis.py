@@ -154,7 +154,7 @@ def run(payload: dict) -> dict:
         readiness: ReadinessOutput = compute_full_readiness(
             hrv_series=hrv_series,
             rhr_series=rhr_series,
-            sleep_hours_today=sleep_h if sleep_h is not None else 0.0,
+            sleep_hours_today=sleep_h,  # None = brak danych -> składnik snu pominięty (nie kara za brak)
             acwr_result=acwr_res,
             temp_alert=temp_alert_obj,
             spo2_confirmed=False,
@@ -209,6 +209,7 @@ def run(payload: dict) -> dict:
                 "sleep_today_h": sleep_h,
                 "temp": len(temp_series),
             },
+            "sleep_data": ("ok" if sleep_h is not None else "missing"),
             "hevy_workouts_count": len(hevy_workouts),
             "mfp_weight_points": len(mfp_weight),
         },

@@ -77,9 +77,11 @@ Sekcje: `readiness` (strefa/RPE/objętość), `acwr` (acute/chronic/ratio/zone),
 - **Waga**: MFP nie przechowuje wagi Rafała (pusty `measurements`) —
   korekta TDEE pomijana (`skipped`). Gdy pojawią się dane, zadziała automatycznie.
 - `run_analysis` wymaga min. 6 punktów HRV historycznych (baseline EWMA).
-- **Brak danych o śnie** jest przekazywany jako `0.0 h`, co wymusza karę +2
-  w scoringu (sleep < 5.5). Gdy sen jest nieobecny, wynik jest zawyżony —
-  traktuj strefę z rezerwą, jeśli `inputs.apple_points.sleep_today_h` jest `null`.
+- **Brak danych o śnie** NIE jest traktowany jak 0h — składnik snu jest wtedy
+  pomijany w scoringu (bez kary), a fakt braku sygnalizuje `readiness.sleep_missing`
+  oraz `inputs.sleep_data: "missing"`. To celowe: brak pomiaru to nie to samo co
+  zero snu, a niezauważony brak zaniżałby ocenę regeneracji. Jeśli sen jest realnie
+  0 lub bardzo krótki, kara działa normalnie (<5.5h = +2, <6.5h = +1).
 
 ## Temperatura nadgarstka (AKTYWNA od 2026-08-07)
 - Źródło: `apple__get_data(name='apple_sleeping_wrist_temperature')` — **osobne
@@ -125,9 +127,9 @@ offline (żaden moduł nie woła MCP bezpośrednio — dane wstrzykuje agent).
 2. **RPE coverage < 70% fałszuje ratio** — patrz sekcja wyżej. To największe
    ryzyko praktyczne; nie podejmuj decyzji o strefie na samym ACWR przy niskim
    pokryciu RPE.
-3. **Brak snu = kara +2** — `run_analysis` przekazuje `sleep_hours=0.0` gdy brak
-   danych, co sztucznie podwyższa score. Rozważyć przekazywanie `None` i pomijanie
-   składnika snu zamiast karania.
+3. ~~Brak snu = kara +2~~ **WDROŻONE** — składnik snu jest teraz pomijany gdy
+   brak danych, a brak jest jawnie sygnalizowany (`sleep_missing` /
+   `sleep_data: "missing"`); realnie krótki sen nadal karze normalnie.
 4. **`fetch_hevy._parse_date`** — puste / `null` `startTime` zwraca `date.today()`
    (może przypiąć trening do złego dnia). Obecnie nieużywane w tym scenariuszu,
    ale potencjalna pułapka przy niespójnych danych Hevy.
@@ -139,7 +141,8 @@ offline (żaden moduł nie woła MCP bezpośrednio — dane wstrzykuje agent).
 ### Rekomendacje (kolejność wg wagi)
 - [ ] Przejść na jednolite pokrycie RPE w oknie 28d przed zaufaniem ACWR
       (backfill RPE dla starych treningów albo zawężenie okna chronic).
-- [ ] Nie karać za brak snu (pkt 3) — szybka poprawka w `run_analysis`.
+      *(TODO — najważniejsze, wymaga danych)*
+- [x] Nie karać za brak snu (pkt 3) — **WDROŻONE 2026-08-07**.
 - [ ] Ujednolicić nazwy pól acute/chronic (pkt 1) — kosmetyka, ale ułatwia
       interpretację outputu.
 - [ ] Usunąć `DISTANCE_BASED` i albo obsłużyć serie dystansowe, albo wywalić.

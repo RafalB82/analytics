@@ -25,14 +25,23 @@ class ReadinessOutput:
     volume_note: str
     hard_override: str | None    # np. z temperatury — nadpisuje strefę niezależnie od total_score
     trend_note: str | None
+    sleep_missing: bool            # True = brak danych o śnie (składnik snu pominięty w score)
 
 
 def score_hrv_rhr_sleep(
     hrv_deviation_pct: float,
     rhr_deviation_bpm: float,
-    sleep_hours: float,
+    sleep_hours: float | None,
 ) -> int:
-    """Oryginalna logika 0-2 pkt / metrykę, bez zmian względem obecnego pipeline'u."""
+    """
+    Oryginalna logika 0-2 pkt / metrykę, bez zmian względem obecnego pipeline'u.
+
+    sleep_hours=None (BRAK DANYCH o śnie) NIE dodaje kar — brak informacji
+    nie jest tym samym co 0 godzin snu. Gdy sen nie został zmierzony, składnik
+    snu jest pomijany, a fakt braku sygnalizuje osobna flaga w ReadinessOutput
+    (sleep_missing=True), żeby warstwa wyższa mogła zaznaczyć niepełną
+    ocenę regeneracji zamiast po cichu liczyć jak dla pełnych danych.
+    """
     score = 0
 
     if hrv_deviation_pct <= -20:
@@ -45,10 +54,11 @@ def score_hrv_rhr_sleep(
     elif rhr_deviation_bpm >= 3:
         score += 1
 
-    if sleep_hours < 5.5:
-        score += 2
-    elif sleep_hours < 6.5:
-        score += 1
+    if sleep_hours is not None:
+        if sleep_hours < 5.5:
+            score += 2
+        elif sleep_hours < 6.5:
+            score += 1
 
     return score
 
@@ -110,6 +120,7 @@ def compute_full_readiness(
         volume_note=volume_note,
         hard_override=hard_override,
         trend_note=trend_note,
+        sleep_missing=sleep_hours_today is None,
     )
 
 

@@ -55,7 +55,6 @@ from .config.settings import ACWR as ACWR_CFG
 from .exceptions import InsufficientDataError, InvalidMetricError
 from .fetch_apple import build_apple_input
 from .fetch_hevy import build_daily_load_series, rpe_coverage
-from .fetch_mfp import to_weight_series
 from .logging import get_logger
 from .readiness_integration import compute_full_readiness
 
@@ -196,23 +195,64 @@ def _build_temp_status(temp_series, hrv_series, target: date) -> temp_mod.TempAl
     return alert
 
 
-def _compute_tdee(mfp_weight: list, params: dict) -> dict:
-    """Adaptacyjna korekta TDEE z trendu wagi MFP (opcjonalne)."""
-    if not mfp_weight:
-        logger.info("TDEE: brak danych o wadze z MFP — korekta pominięta")
-        return {"status": "skipped", "note": "brak danych o wadze z MFP — korekta TDEE pominięta"}
+def _compute_goal(energy_series, weight_info: dict, params: dict) -> dict:
+    """Cel kaloryczny z aktywności Apple (TDEE + marża wg celu).
 
-    weight_series = to_weight_series(mfp_weight)
-    trend = nutr_mod.compute_weight_trend(weight_series)
-    adj = nutr_mod.adjust_tdee(
-        current_tdee=float(params.get("tdee_current", 2260)),
-        weight_trend_kg_per_day=trend,
-        target_trend_kg_per_week=float(params.get("target_trend_kg_per_week", 0.0)),
+    TDEE = średnie basal + active z okna (7d, docelowo 28d) — z Apple Health.
+    MFP nie uczestniczy: dostarcza tylko zjedzone kalorie/jedzenie.
+    Waga (punkt kontrolny z Apple, opcjonalna) służy do białka + kontekstu.
+    """
+    goal = str(params.get("phase", "utrzymanie"))  # 'phase' = aktualny cel
+    bodyweight = None
+    if weight_info.get("present"):
+        bodyweight = weight_info.get("weight_kg")
+
+    try:
+        est = nutr_mod.compute_tdee(
+            energy_series=energy_series,
+            goal=goal,
+            bodyweight_kg=bodyweight,
+        )
+    except ValueError as e:
+        logger.warning("TDEE: %s", e)
+        return {"status": "skipped", "reason": str(e)}
+
+    # dłuższe okno (28d) jako porównanie do aktywnego (7d)
+    long_est = nutr_mod.compute_long_window_tdee(
+        energy_series, goal=goal, bodyweight_kg=bodyweight,
     )
-    info = asdict(adj)
-    info["status"] = "ok"
-    logger.info("TDEE: korekta %d kcal (confidence=%s)", adj.adjustment_kcal, adj.confidence)
-    return info
+    long_info = None
+    if long_est is not None:
+        long_info = {
+            "tdee_kcal": long_est.tdee_kcal,
+            "target_kcal": long_est.target_kcal,
+            "window_days": long_est.window_days,
+            "n_days": long_est.n_days,
+        }
+
+    logger.info("CEL: %s -> target=%.0f kcal (TDEE 7d), long28: %s",
+                goal, est.target_kcal, long_info["tdee_kcal"] if long_info else None)
+
+    return {
+        "status": "ok",
+        "goal": goal,
+        "tdee_kcal": est.tdee_kcal,
+        "basal_kcal": est.basal_kcal,
+        "active_kcal": est.active_kcal,
+        "window_days": est.window_days,
+        "n_days": est.n_days,
+        "margin_pct": est.margin_pct,
+        "target_kcal": est.target_kcal,
+        "protein_g": est.protein_g,
+        "activity": {
+            "avg_exercise_min": est.avg_exercise_min,
+            "avg_stand_min": est.avg_stand_min,
+            "avg_physical_effort": est.avg_physical_effort,
+            "training_days_ratio": est.training_days_ratio,
+        },
+        "long_window_28d": long_info,
+        "weight": weight_info if weight_info.get("present") else {"present": False},
+    }
 
 
 # --- Faza 5: serialize_output ------------------------------------------------
@@ -257,7 +297,7 @@ def run(payload: dict) -> dict[str, Any]:
             temp_alert=temp_alert,
             spo2_confirmed=False,
         )
-        tdee_info = _compute_tdee(mfp_weight, params)
+        goal_info = _compute_goal(models["energy_series"], models["weight_info"], params)
 
         trend_hrv = baseline_mod.compute_trend_slope(models["hrv_series"])
         trend_rhr = baseline_mod.compute_trend_slope(models["rhr_series"])
@@ -278,7 +318,7 @@ def run(payload: dict) -> dict[str, Any]:
                 ],
             },
             "temperature": _temp_output(temp_alert, models["temp_series"], target),
-            "tdee_adaptive": tdee_info,
+            "nutrition": goal_info,
             "baseline_trends": {
                 "hrv": (asdict(trend_hrv) if trend_hrv else None),
                 "rhr": (asdict(trend_rhr) if trend_rhr else None),

@@ -22,6 +22,7 @@ from typing import Any
 
 from .baseline import MetricPoint
 from .logging import get_logger
+from .nutrition_adaptive import DailyEnergy
 from .validators import hrv as _val_hrv
 from .validators import rhr as _val_rhr
 from .validators import sleep as _val_sleep
@@ -105,20 +106,71 @@ def to_temp_series_from_points(temp_points: list[dict]) -> list[Any]:
     return out
 
 
+def _energy_field(d: dict, key: str) -> float | None:
+    """Bezpieczny odczyt numerycznego pola dziennego (None jeśli puste/złe)."""
+    v = d.get(key)
+    try:
+        return float(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def to_energy_series(daily: list[dict]) -> list[DailyEnergy]:
+    """
+    Serie dziennej aktywności (basal/active kJ + minuty ćwiczeń/stania + effort)
+    z apple_daily -> lista DailyEnergy (dla nutrition_adaptive TDEE).
+    Dni bez basal/active zostają z None w tych polach (liczone tylko kompletne).
+    """
+    out = []
+    for d in daily:
+        out.append(DailyEnergy(
+            day=_d(d),
+            basal_kj=_energy_field(d, "basal_energy_burned"),
+            active_kj=_energy_field(d, "active_energy"),
+            exercise_min=_energy_field(d, "apple_exercise_time"),
+            stand_min=_energy_field(d, "apple_stand_time"),
+            physical_effort=_energy_field(d, "physical_effort"),
+        ))
+    out.sort(key=lambda e: e.day)
+    return out
+
+
+def latest_weight(daily: list[dict]) -> dict:
+    """
+    Najnowszy punkt kontrolny wagi/składu ciała z apple_daily (jeśli obecny).
+    Apple zwraca wagę tylko w dni, gdy użytkownik się zważył (reszta null) —
+    stąd bierzemy OSTATNI dzień z niepustym weight_body_mass. Zwraca dict
+    z polami weight_kg / body_fat_pct / lean_kg / bmi / height / date lub
+    {'present': False} gdy brak.
+    """
+    for d in reversed(daily):
+        w = d.get("weight_body_mass")
+        if w is not None:
+            return {
+                "present": True,
+                "date": _d(d).isoformat(),
+                "weight_kg": float(w),
+                "body_fat_pct": d.get("body_fat_percentage"),
+                "lean_kg": d.get("lean_body_mass"),
+                "bmi": d.get("body_mass_index"),
+                "height": d.get("height"),
+            }
+    return {"present": False}
+
+
 def build_apple_input(
     daily: list[dict],
     target_date: date | None = None,
     temp_points: list[dict] | None = None,
 ) -> dict:
     """
-    Składa kompletny input pod readiness_integration.compute_full_readiness,
-    z wyjątkiem acwr_result i temp_alert (te pochodzą z Hevy / temperatury).
+    Składa kompletny input pod readiness_integration.compute_full_readiness
+    oraz nutrition_adaptive (TDEE z aktywności).
     Zwraca dict z kluczami: hrv_series, rhr_series, sleep_hours_today,
-    temp_series.
+    temp_series, energy_series (lista DailyEnergy), weight_info (punkt/kontrola).
 
     temp_points: opcjonalna lista punktów temperatury z apple__get_data
-    (name='apple_sleeping_wrist_temperature') — osobne źródło, bo seria
-    dzienna (get_daily_activity_range) nie zawiera temperatury.
+    (name='apple_sleeping_wrist_temperature') — osobne źródło.
     """
 
     target_date = target_date or (daily[-1]["date"] if daily else date.today())
@@ -129,6 +181,8 @@ def build_apple_input(
         "rhr_series": to_rhr_series(daily),
         "sleep_hours_today": to_sleep_hours(daily, tdate),
         "temp_series": to_temp_series_from_points(temp_points) if temp_points else to_temp_series(daily),
+        "energy_series": to_energy_series(daily),
+        "weight_info": latest_weight(daily),
     }
 
 

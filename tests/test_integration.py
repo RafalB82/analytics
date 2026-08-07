@@ -16,15 +16,41 @@ from analytics.run_analysis import parse_input, run, validate_input
 
 
 def _mk_apple(n_days: int = 14, end: date | None = None) -> list[dict]:
-    """Syntetyczna seria dzienna Apple (HRV/RHR/sen)."""
+    """Syntetyczna seria dzienna Apple (HRV/RHR/sen + aktywność energetyczna + punkt wagi)."""
+    end = end or date(2026, 8, 7)
+    out = []
+    for i in range(n_days):
+        d = end - timedelta(days=n_days - 1 - i)
+        day = {
+            "date": d.isoformat(),
+            "resting_heart_rate": 52.0 if i < n_days - 3 else 55.0,
+            "heart_rate_variability": 50.0 if i < n_days - 3 else 42.0,
+            "sleep": {"total_hours": 7.2},
+            # aktywność (kJ) zbliżona do realnych danych Apple po dedup
+            "basal_energy_burned": float(14000 + (i % 4) * 500),
+            "active_energy": float(3000 + (i % 3) * 1500),
+            "apple_exercise_time": float(30 + (i % 5) * 40),
+            "apple_stand_time": 300.0,
+            "physical_effort": 3.0,
+        }
+        # waga -> punkt kontrolny tylko na ostatni dzień
+        if i == n_days - 1:
+            day.update({"weight_body_mass": 71.05, "body_fat_percentage": 15.1,
+                        "lean_body_mass": 60.3, "body_mass_index": 24.3, "height": 1.71})
+        out.append(day)
+    return out
+
+
+def _mk_apple_without_energy(n_days: int = 14, end: date | None = None) -> list[dict]:
+    """Seria Apple BEZ pól energii (basal/active) — do testu pominięcia TDEE."""
     end = end or date(2026, 8, 7)
     out = []
     for i in range(n_days):
         d = end - timedelta(days=n_days - 1 - i)
         out.append({
             "date": d.isoformat(),
-            "resting_heart_rate": 52.0 if i < n_days - 3 else 55.0,
-            "heart_rate_variability": 50.0 if i < n_days - 3 else 42.0,
+            "resting_heart_rate": 52.0,
+            "heart_rate_variability": 48.0,
             "sleep": {"total_hours": 7.2},
         })
     return out
@@ -71,11 +97,12 @@ class TestRunEndToEnd:
         result = run(_payload())
         assert result["status"] == "ok"
         for key in ("readiness", "acwr", "acwr_detail", "temperature",
-                    "tdee_adaptive", "baseline_trends", "inputs"):
+                    "nutrition", "baseline_trends", "inputs"):
             assert key in result
         assert "zone" in result["readiness"]
         assert "ratio" in result["acwr"]
         assert result["temperature"]["status"] == "no_data"
+        assert result["nutrition"]["status"] == "ok"
 
     def test_deterministic_output(self):
         assert run(_payload()) == run(_payload())
@@ -107,16 +134,40 @@ class TestRunEndToEnd:
         assert result["status"] == "ok"
         assert result["temperature"]["status"] == "ok"
 
-    def test_mfp_weight_tdee(self):
-        # 14 punktów wagi rosnącej -> korekta TDEE (status ok)
-        end = date(2026, 8, 7)
-        weights = [
-            {"date": (end - timedelta(days=i)).isoformat(), "value": 70.0 + i * 0.1}
-            for i in range(14)
-        ]
-        result = run(_payload(mfp_weight=weights))
+    def test_nutrition_goal_from_activity(self):
+        # cel kaloryczny liczony z aktywności Apple (TDEE + marża wg celu)
+        result = run(_payload())
+        n = result["nutrition"]
+        assert n["status"] == "ok"
+        assert n["goal"] == "utrzymanie"
+        assert n["target_kcal"] == n["tdee_kcal"]  # marża 0 dla utrzymania
+        assert n["tdee_kcal"] > 0
+        assert n["window_days"] == 7
+        # waga z Apple jako punkt kontrolny
+        assert n["weight"]["present"] is True
+        assert n["weight"]["weight_kg"] == 71.05
+        # białko z wagi
+        assert n["protein_g"] is not None
+
+    def test_nutrition_redukcja_negative_margin(self):
+        result = run(_payload(params={"phase": "redukcja", "bodyweight_kg": 69.9}))
+        n = result["nutrition"]
+        assert n["status"] == "ok"
+        assert n["target_kcal"] < n["tdee_kcal"]
+        assert n["margin_pct"] == -0.15
+
+    def test_nutrition_skipped_without_energy(self):
+        # brak basal/active w danych -> cel pominięty (nie error)
+        p = _payload(apple_daily=_mk_apple_without_energy())
+        result = run(p)
         assert result["status"] == "ok"
-        assert result["tdee_adaptive"]["status"] == "ok"
+        assert result["nutrition"]["status"] == "skipped"
+
+    def test_long_window_28d_present(self):
+        result = run(_payload())
+        long28 = result["nutrition"].get("long_window_28d")
+        assert long28 is not None
+        assert long28["window_days"] == 28
 
     def test_missing_baseline_returns_fallback_via_run(self):
         # Zbyt mało punktów -> MissingBaselineError łapany jako fallback

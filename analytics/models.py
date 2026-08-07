@@ -18,7 +18,12 @@ from .config.settings import RANGES
 
 
 class DailyMetrics(BaseModel):
-    """Dzienne metryki fizjologiczne (jeden punkt szeregu czasowego)."""
+    """Dzienne metryki fizjologiczne (jeden punkt szeregu czasowego).
+
+    Obejmuje sygnały regeneracyjne (HRV/RHR/sen/temperatura) oraz aktywność
+    energetyczną i skład ciała (z Apple Health MCP). Pola opcjonalne — dzień
+    może mieć puste pola (np. waga tylko w dni ważenia).
+    """
 
     model_config = ConfigDict(extra="ignore")
 
@@ -28,6 +33,19 @@ class DailyMetrics(BaseModel):
     sleep: float | None = Field(default=None, ge=RANGES.sleep[0], le=RANGES.sleep[1])
     weight: float | None = Field(default=None, ge=RANGES.weight[0], le=RANGES.weight[1])
     temperature: float | None = Field(default=None, ge=RANGES.temperature[0], le=RANGES.temperature[1])
+
+    # aktywność energetyczna (z get_daily_activity_range, po dedup w MCP)
+    basal_kj: float | None = Field(default=None, ge=0)
+    active_kj: float | None = Field(default=None, ge=0)
+    exercise_min: float | None = Field(default=None, ge=0)
+    stand_min: float | None = Field(default=None, ge=0)
+    physical_effort: float | None = Field(default=None, ge=0)
+
+    # skład ciała (punkt kontrolny — tylko w dni ważenia)
+    body_fat_pct: float | None = Field(default=None, ge=0, le=100)
+    lean_kg: float | None = Field(default=None, ge=0)
+    bmi: float | None = Field(default=None, ge=0)
+    height: float | None = Field(default=None, ge=0)
 
 
 class TempAlertStatus(BaseModel):

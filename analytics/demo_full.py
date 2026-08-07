@@ -55,19 +55,45 @@ def _mk_hevy(days: list[date], rpe_mode: bool) -> list[dict]:
 
 
 def _mk_apple(days: list[date], hrv_base=40.0, sleep_base=7.0) -> list[dict]:
-    """Syntetyczna seria Apple (dziennie HRV/RHR/sen)."""
+    """Syntetyczna seria Apple (HRV/RHR/sen + aktywność energetyczna + punkt wagi).
+
+    Aktywność: basal ~14500-21700 kJ, active ~860-13500 kJ (jak realne dane
+    z get_daily_activity_range). Waga: punkt kontrolny tylko na OSTATNI dzień
+    (Apple zwraca wagę tylko w dni ważenia, reszta None).
+    """
     out = []
     for i, d in enumerate(days):
         # lekki trend spadkowy HRV + lekkie sinusowe odchylenia
         hrv = hrv_base - i * 0.3 + (5 if i % 4 == 3 else 0)
         rhr = 51 + (2 if i % 4 == 3 else 0)
         sleep = sleep_base + (-1.2 if i % 4 == 3 else 0.2)
-        out.append({
+        # aktywność zbliżona do zdeduplikowanych realnych pomiarów Apple (basal ~7000-7400 kJ
+        # = ~1700 kcal BMR; active 1500-5000 kJ zależnie od dnia)
+        basal = 7000 + (i % 4) * 300
+        active = 1500 + (i % 3) * 1200 + (2000 if i % 4 == 3 else 0)
+        exercise = (5 + (i % 4) * 60) if i % 2 == 0 else 0
+        stand = 200 + (i % 3) * 50
+        day = {
             "date": d.strftime("%Y-%m-%d"),
             "resting_heart_rate": round(rhr, 1),
             "heart_rate_variability": round(hrv, 2),
             "sleep": {"total_hours": round(sleep, 2)},
-        })
+            "basal_energy_burned": float(basal),
+            "active_energy": float(active),
+            "apple_exercise_time": float(exercise),
+            "apple_stand_time": float(stand),
+            "physical_effort": round(2.8 + (i % 3) * 0.2, 2),
+        }
+        # waga tylko na ostatni dzień (punkt kontrolny)
+        if i == len(days) - 1:
+            day.update({
+                "weight_body_mass": 71.05,
+                "body_fat_percentage": 15.1,
+                "lean_body_mass": 60.3,
+                "body_mass_index": 24.3,
+                "height": 1.71,
+            })
+        out.append(day)
     return out
 
 

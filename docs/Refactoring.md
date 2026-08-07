@@ -78,3 +78,18 @@ ANALYTICS_DEBUG=1 python -m analytics.demo_full
   `AnalysisReport` to dalszy krok, bezpieczny i izolowany).
 - **cron/integracja z harmonogramem** — logi (F4) nabiorą pełnej wartości dopiero po
   wpięciu analizy do zadania cron; to kolejny krok poza zakresem tego refaktoru.
+
+## Nowy model odżywiania (cel kaloryczny z aktywności)
+
+Osobny commit po refaktorze strukturalnym — zmiana logiki odżywiania:
+
+- **TDEE z aktywności Apple** (nie z MFP): śr. basal_energy + active_energy z okna
+  (7d domyślnie, 28d docelowo — oba liczone, aktywne 7d).
+- **Cel kaloryczny = TDEE + marża % wg celu**: utrzymanie 0 / redukcja −15% / masa +10%.
+- **MFP dostarcza tylko kalorie/jedzenie** — cel z MFP pomijany, waga nie bierze się z MFP.
+- **Waga = punkt kontrolny z Apple** (w dni ważenia) — do białka i kontekstu, nie trend.
+- Marży i okna konfigurowalne w `config/settings.NutritionSettings`.
+
+Niezbędny bug w źródle: `health-auto-export-api` sumował te same pomiary zegarka
+z wielu identyfikatorów źródła Health Kit (dubel ~3x energii). Naprawiony deduplikacją
+po minucie (`_dedup_rows`) — osobny commit w tamtym repo (`2eaa491`).

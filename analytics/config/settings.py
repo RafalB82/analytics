@@ -76,23 +76,48 @@ class TemperatureSettings:
     significant_multiplier: float = 1.5
 
 
-# --- Odżywianie (TDEE adaptive + białko) ------------------------------------
+# --- Odżywianie (TDEE z aktywności + białko) --------------------------------
 
 
 @dataclass(frozen=True)
 class NutritionSettings:
-    """Parametry pętli zwrotnej TDEE i celu białkowego."""
+    """Parametry wyliczania celu kalorycznego (TDEE z aktywności) i celu białkowego.
 
-    #: standardowa wartość energetyczna 1 kg tkanki tłuszczowej (kcal)
+    TDEE liczony jest z rzeczywistej aktywności Apple Health (basal + active),
+    NIE z celu MFP. Marża kaloryczna jest procentowa względem TDEE, zależna
+    od aktualnego celu (utrzymanie / redukcja / masa).
+    """
+
+    #: okno aktywności (dni) do średniego TDEE — 7 = bieżąca forma
+    activity_window_days: int = 7
+    #: okno docelowe (dłuższe = większa stabilność) — aktywne po zwiększeniu window
+    activity_window_long_days: int = 28
+    #: czy liczyć też długie okno (28d) obok aktywnego (7d) dla porównania
+    compute_long_window: bool = True
+
+    #: marża kaloryczna (% od TDEE) wg celu — ujemna = deficyt (redukcja),
+    #: dodatnia = nadwyżka (masa). Mnożnik względem TDEE.
+    goal_margin: dict = field(
+        default_factory=lambda: {"utrzymanie": 0.0, "redukcja": -0.15, "masa": 0.10}
+    )
+    #: domyślna marża, gdy cel nieznany
+    margin_default: float = 0.0
+
+    #: kcal/dzień z 1 kg tkanki tłuszczowej (kontekst trendu wagi, rezerwa)
     kcal_per_kg_fat: int = 7700
-    #: okno trendu wagi (dni)
+
+    #: okno trendu wagi (dni) — rezerwa na przyszły, wielopunktowy trend
     weight_trend_window_days: int = 14
-    #: minimalna liczba punktów wagi do policzenia trendu
+    #: minimalna liczba punktów wagi do policzenia trendu (rezerwa)
     weight_min_points: int = 8
-    #: maks. pojedyncza korekta TDEE (kcal) — chroni przed zaszumioną korektą
+    #: maks. pojedyncza korekta marży (kcal) z trendu wagi (rezerwa)
     max_single_adjustment_kcal: float = 250
-    #: próg |trend_gap| (kg/tydz) do klasyfikacji confidence "wysoka"
+    #: próg |trend_gap| (kg/tydz) do klasyfikacji confidence "wysoka" (rezerwa)
     confidence_gap_kg_per_week: float = 0.1
+
+    #: konwersja kJ -> kcal (1 kcal = 4.184 kJ)
+    kj_per_kcal: float = 4.184
+
     #: białko g/kg wg fazy
     protein_g_per_kg: dict = field(
         default_factory=lambda: {"deficyt": 2.2, "utrzymanie": 1.8, "nadwyżka": 1.8}

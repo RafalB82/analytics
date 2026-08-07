@@ -121,7 +121,11 @@ class TestComputeWeightTrend:
     def test_rising_weight_positive_slope(self):
         from analytics.nutrition_adaptive import compute_weight_trend
         trend = compute_weight_trend(self._w([70 + i * 0.1 for i in range(10)]), min_points=8)
-        assert trend is not None and trend > 0
+        assert trend is not None
+        assert trend.slope_kg_per_day > 0
+        # rolling median zbliżony do środka zakresu (70..~71)
+        assert abs(trend.rolling_median_kg - 70.5) < 0.6
+        assert trend.weekly_trend_kg > 0
 
 
 class TestAdjustTdee:

@@ -57,6 +57,7 @@ from .config.settings import ACWR as ACWR_CFG
 from .exceptions import InsufficientDataError, InvalidMetricError
 from .fetch_apple import build_apple_input
 from .fetch_hevy import build_daily_load_series, rpe_coverage
+from .fetch_mfp import to_weight_series
 from .logging import get_logger
 from .models import AnalysisReport
 from .readiness_integration import compute_full_readiness
@@ -353,6 +354,16 @@ def run(payload: dict) -> dict[str, Any]:
         # --- Activity Stability (faza 3.0) -------------------------------------
         activity_stability = stab_mod.activity_stability(activity_vals) if activity_vals else None
 
+        # --- Weight Trend (faza 4.0) z serii MFP (jedyna seria wielopunktowa) ---
+        weight_trend = None
+        if mfp_weight:
+            w_series = to_weight_series(mfp_weight)
+            wt = nutr_mod.compute_weight_trend(w_series)
+            if wt is not None:
+                weight_trend = wt.to_dict()
+                logger.info("trend wagi: %+.3f kg/dzień (mediana %.2f kg, %d pkt)",
+                            wt.slope_kg_per_day, wt.rolling_median_kg, wt.n_points)
+
         report = AnalysisReport(
             status="ok",
             source=source,
@@ -375,6 +386,7 @@ def run(payload: dict) -> dict[str, Any]:
                 "rhr": (asdict(trend_rhr) if trend_rhr else None),
             },
             confidence=confidence or None,
+            weight_trend=weight_trend,
             activity_stability=(
                 activity_stability.to_dict() if activity_stability else None
             ),

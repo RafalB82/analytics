@@ -159,27 +159,59 @@ def compute_long_window_tdee(
         return None
 
 
+@dataclass(frozen=True)
+class WeightTrend:
+    """Wynik analizy trendu wagi (faza 4.0): slope + rolling median + kontekst."""
+
+    slope_kg_per_day: float     # nachylenie regresji liniowej (kg/dzień)
+    rolling_median_kg: float    # mediana wag w oknie (robustny środek ciężkości)
+    weekly_trend_kg: float      # slope przeliczony na kg/tydzień
+    n_points: int               # liczba punktów użytych do trendu
+    window_days: int            # okno analizy (dni)
+
+    def to_dict(self) -> dict:
+        return {
+            "slope_kg_per_day": self.slope_kg_per_day,
+            "rolling_median_kg": self.rolling_median_kg,
+            "weekly_trend_kg": self.weekly_trend_kg,
+            "n_points": self.n_points,
+            "window_days": self.window_days,
+        }
+
+
 def compute_weight_trend(
     series: list[Any],
     window_days: int = _CFG.weight_trend_window_days,
     min_points: int = _CFG.weight_min_points,
-) -> float | None:
-    """
-    Trend liniowy wagi w kg/dzień (rezerwa na wielopunktowy trend z Apple).
+) -> WeightTrend | None:
+    """Trend liniowy + rolling median wagi (kg) z serii wielopunktowej.
 
-    Obecnie waga z Apple jest PUNKTEM (die punkt kontrolny), nie trendem —
-    ta funkcja zostaje na przyszłość, gdy zbierze się >= min_points punktów.
-    Przyjmuje dowolną serię z atrybutami .day/.weight_kg (WeightPoint lub
-    odpowiednik z fetch).
+    Używa dowolnej serii z atrybutami .day/.weight_kg (WeightSample / WeightPoint
+    z fetch_mfp / fetch_apple). Zwraca None, gdy za mało punktów (< min_points).
+
+    Wynik (WeightTrend):
+      - slope_kg_per_day: nachylenie regresji liniowej (kg/dzień)
+      - rolling_median_kg: mediana wag w oknie (robustny środek ciężkości)
+      - weekly_trend_kg: slope przeliczony na kg/tydzień
+      - n_points / window_days: kontekst danych
     """
     if len(series) < min_points:
         logger.debug("za mało punktów wagi do trendu: %d (min %d)", len(series), min_points)
         return None
-    recent = series[-window_days:]
+    recent = sorted(series[-window_days:], key=lambda p: p.day)
     x = np.arange(len(recent))
     y = np.array([p.weight_kg for p in recent])
+    if len(x) < 2:
+        return None
     slope, _ = np.polyfit(x, y, 1)
-    return round(float(slope), 4)
+    median = float(np.median(y))
+    return WeightTrend(
+        slope_kg_per_day=round(float(slope), 4),
+        rolling_median_kg=round(median, 2),
+        weekly_trend_kg=round(float(slope) * 7, 3),
+        n_points=len(recent),
+        window_days=window_days,
+    )
 
 
 def adjust_tdee(

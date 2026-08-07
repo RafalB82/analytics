@@ -261,10 +261,21 @@ ich mieszać w jednym stosunku. Dlatego:
 ratio = (HRavg - HRrest) / (HRmax - HRrest)
 TRIMP = czas * ratio * 0.64 * e^(1.92 * ratio)
 ```
-W pełni automatyczny (bez ręcznego RPE). `hr_rest_default`/`hr_max_default`
-w `ACWRSettings` (dopasuj do siebie: rest = poranne spoczynkowe, max ≈ 220-wiek).
+W pełni automatyczny (bez ręcznego RPE).
+
+**hr_max z danej sesji treningowej** (`max_heart_rate_bpm`), gdy dostępny — pełniejszy obraz
+pułapu osiągniętego w danej aktywności, a nie teoretyczna stała osobowego max. Gdy brak,
+pada na `hr_max_default` z configu. `hr_rest` zawsze z configu (`hr_rest_default` — poranne
+spoczynkowe, niezmienne per sesja).
 
 ### Wejście
 Nowy slot `apple_workouts` w schema (lista z `apple__list_recent_workouts`),
 przeciągnięty przez `validate_input` → `build_acwr` → `pipeline` → `run()`.
 Raport: `acwr_detail.cardio` (acute/chronic/ratio/zone/n_cardio_days).
+
+### Odporność klasyfikacji cardio
+`is_cardio_workout()` ma (1) **czarną listę siłowych/kalistenicznych słów kluczowych**
+(strength, lunge, press, curl, squat itd.) z **pierwszeństwem** — chroni przed false-positive
+cardio, gdy custom nazwa zawiera cardio-słowo (np. "Walking Lunges" + "walk"); (2) dopasowanie
+pełnej nazwy (zamknięty enum kategorii HealthKit); (3) dopasowanie po słowie kluczowym.
+„Rowing" (cardio) nie jest blokowane przez siłowe „row" — usunięte z czarnej listy.

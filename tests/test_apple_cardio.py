@@ -34,6 +34,18 @@ class TestIsCardioWorkout:
         assert not is_cardio_workout({"name": "Cross Training"})
         assert not is_cardio_workout({"name": "Bodyweight Workout"})
 
+    def test_custom_strength_name_with_cardio_word_is_not_cardio(self):
+        # przypadki graniczne: custom nazwa siłowa zawierająca cardio-słowo.
+        # Czarna lista siłowych słów kluczowych MA PIERWSZEŃSTWO.
+        assert not is_cardio_workout({"name": "Walking Lunges"})
+        assert not is_cardio_workout({"name": "Walking Curls"})
+        assert not is_cardio_workout({"name": "Stair Lunges"})
+
+    def test_rowing_still_cardio_despite_row_keyword(self):
+        # "rowing" (ergometr/cardio) nie może być zablokowane przez siłowe "row"
+        assert is_cardio_workout({"name": "Rowing"})
+        assert is_cardio_workout({"name": "Indoor Rowing"})
+
 
 class TestComputeTrimp:
     def test_higher_hr_gives_higher_trimp(self):
@@ -73,6 +85,34 @@ class TestAppleWorkoutDailyLoad:
         assert apple_workout_daily_load(
             {"name": "Traditional Strength Training", "start": "2026-08-05T19:12:49",
              "duration_min": 102.9, "avg_heart_rate_bpm": 117.2}
+        ) is None
+
+    def test_uses_session_max_hr_when_available(self):
+        # zastrzeżenie 1: hr_max brane z SESJI (max_heart_rate_bpm), nie stałej configu.
+        # Wyższy max sesji => niższy TRIMP (mniejsza frakcja HRmax przy tym samym avg).
+        import analytics.apple_cardio as ac
+        base_avg = 143.5
+        high_max = ac.compute_trimp_session_load(base_avg, 88.2, hr_max=190)
+        low_max = ac.compute_trimp_session_load(base_avg, 88.2, hr_max=170)  # sesja ma max=170
+        assert low_max > high_max  # mniejszy mianownik => większy TRIMP
+        # przez apple_workout_daily_load z max sesji 170
+        day, load = apple_workout_daily_load(
+            {"name": "Outdoor Cycling", "start": "2026-08-06T17:37:17",
+             "duration_min": 88.2, "avg_heart_rate_bpm": 143.5, "max_heart_rate_bpm": 170.0}
+        )
+        # musi się różnić od wariantu bez max sesji (który używa configu 190)
+        _, load_cfg = apple_workout_daily_load(
+            {"name": "Outdoor Cycling", "start": "2026-08-06T17:37:17",
+             "duration_min": 88.2, "avg_heart_rate_bpm": 143.5}
+        )
+        assert load > load_cfg  # max sesji 170 < 190 => wyższy TRIMP
+        assert load > 0
+
+    def test_patologic_max_hr_rejected(self):
+        # max_hr <= 0 -> sesja odrzucana, nie wywala pipeline
+        assert apple_workout_daily_load(
+            {"name": "Outdoor Cycling", "start": "2026-08-06T17:37:17",
+             "duration_min": 88.2, "avg_heart_rate_bpm": 143.5, "max_heart_rate_bpm": 0}
         ) is None
 
     def test_missing_hr_returns_none(self):

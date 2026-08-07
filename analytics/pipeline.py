@@ -46,6 +46,7 @@ class PipelineContext:
     apple_daily: list = field(default_factory=list)
     hevy_workouts: list = field(default_factory=list)
     cardio_sessions: list = field(default_factory=list)
+    apple_workouts: list = field(default_factory=list)
     mfp_weight: list = field(default_factory=list)
     apple_temp: list = field(default_factory=list)
 
@@ -75,9 +76,11 @@ class PipelineContext:
 def input_validation_stage(ctx: PipelineContext) -> PipelineContext:
     """Stage 1: walidacja wejścia + rozbicie payloadu."""
     (ctx.source, ctx.target, ctx.params, ctx.apple_daily,
-     ctx.hevy_workouts, ctx.cardio_sessions, ctx.mfp_weight, ctx.apple_temp) = validate_input(
+     ctx.hevy_workouts, ctx.apple_workouts, ctx.cardio_sessions,
+     ctx.mfp_weight, ctx.apple_temp) = validate_input(
         {"source": ctx.source, "target_date": ctx.target,
          "apple_daily": ctx.apple_daily, "hevy_workouts": ctx.hevy_workouts,
+         "apple_workouts": ctx.apple_workouts,
          "cardio_sessions": ctx.cardio_sessions,
          "mfp_weight": ctx.mfp_weight, "apple_temp": ctx.apple_temp,
          "params": ctx.params})
@@ -88,7 +91,9 @@ def model_building_stage(ctx: PipelineContext) -> PipelineContext:
     """Stage 2: budowa modeli / serii analitycznych (Apple + Hevy)."""
     assert ctx.target is not None, "target nie ustawiony po walidacji"
     ctx.models = build_apple_models(ctx.apple_daily, ctx.target, ctx.apple_temp)
-    ctx.acwr_info = build_acwr(ctx.hevy_workouts, ctx.target, cardio_sessions=ctx.cardio_sessions)
+    ctx.acwr_info = build_acwr(ctx.hevy_workouts, ctx.target,
+                               cardio_sessions=ctx.cardio_sessions,
+                               apple_workouts=ctx.apple_workouts)
     return ctx
 
 
@@ -102,6 +107,7 @@ def analytics_stage(ctx: PipelineContext) -> PipelineContext:
         rhr_series=m["rhr_series"],
         sleep_hours_today=m["sleep_hours_today"],
         acwr_result=ctx.acwr_info["result"],
+        cardio_acwr=ctx.acwr_info.get("cardio"),
         temp_alert=ctx.temp_alert,
         spo2_confirmed=False,
     )
@@ -216,6 +222,7 @@ def serialization_stage(ctx: PipelineContext) -> PipelineContext:
             "acute_7d": ctx.acwr_info["acute"],
             "chronic_28d_ewma": ctx.acwr_info["chronic"],
             "rpe_coverage": ctx.acwr_info["rpe_coverage"],
+            "cardio": ctx.acwr_info.get("cardio_detail"),
             "daily_loads_last14": [
                 {"day": str(d.day), "load": d.load}
                 for d in ctx.acwr_info["daily_loads"][-14:]

@@ -149,3 +149,37 @@ def acwr_readiness_modifier(acwr: ACWRResult) -> int:
     if acwr.zone == "podwyższone ryzyko":
         return 1
     return 0
+
+
+def acwr_combined_modifier(strength: ACWRResult, cardio: ACWRResult | None) -> int:
+    """
+    Łączny modyfikator gotowości z OSOBNYCH ACWR siły i cardio.
+
+    Siła i cardio są liczone w różnych skalach (tonaż vs TRIMP), więc mają
+    osobne ACWR; ten modyfikator scala je na poziomie gotowości biorąc
+    MAKSIMUM punktów karnych z obu źródeł — najwyższe ryzyko wygrywa.
+    Gdy cardio brak (None), zwraca tylko modyfikator siłowy (backward-compat).
+    """
+    str_mod = acwr_readiness_modifier(strength)
+    if cardio is None:
+        return str_mod
+    card_mod = acwr_readiness_modifier(cardio)
+    return max(str_mod, card_mod)
+
+
+def build_cardio_acwr(daily_series: list[SessionLoad]) -> ACWRResult:
+    """
+    ACWR dla sesji wydolnościowych (cardio) — OSOBNY osobnego od siłowego.
+
+    Cardio (z Apple Watch) liczone jest w skali TRIMP (setki), a siła
+    (z Hevy) w skali tonażu (tysiące) — to różne jednostki, więc NIE można
+    ich mieszać w jednym stosunku. Tę funkcję wołaj na szeregu dziennym
+    TRIMP (patrz apple_cardio.build_apple_cardio_series); siłowe ACWR
+    licz osobnym wywołaniem na tonarażu z Hevy, a oba połącz na poziomie
+    gotowości (np. maksimum stref / suma punktów karnych).
+
+    Zwraca ACWRResult w strefach 0.8-1.3 (stosunek — jednostki bez znaczenia).
+    """
+    acute = compute_acute_load(daily_series)
+    chronic = compute_chronic_load(daily_series)
+    return acwr_ratio(acute, chronic)

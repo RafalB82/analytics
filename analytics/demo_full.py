@@ -127,6 +127,17 @@ def main():
         "apple_daily": apple_daily,
         "apple_temp": apple_temp,
         "hevy_workouts": hevy_workouts,
+        "apple_workouts": [
+            # z Apple Watch: cardio wchodzi do ACWR (TRIMP), siłowe odrzucane
+            {"name": "Outdoor Cycling", "start": "2026-08-06T17:37:17",
+             "duration_min": 88.2, "avg_heart_rate_bpm": 143.5},
+            {"name": "Outdoor Walk", "start": "2026-08-05T21:01:06",
+             "duration_min": 48.5, "avg_heart_rate_bpm": 100.5},
+            {"name": "Outdoor Cycling", "start": "2026-08-04T17:22:02",
+             "duration_min": 71.5, "avg_heart_rate_bpm": 146.8},
+            {"name": "Traditional Strength Training", "start": "2026-08-05T19:12:49",
+             "duration_min": 102.9, "avg_heart_rate_bpm": 117.2},  # ignorowana (siła = Hevy)
+        ],
         "mfp_weight": None,   # brak wagi w MFP
         "params": {
             "tdee_current": 2260,

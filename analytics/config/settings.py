@@ -60,6 +60,12 @@ class ACWRSettings:
     zone_optimal_high: float = 1.3
     zone_elevated_high: float = 1.5
 
+    #: tętno spoczynkowe / maksymalne (bpm) do TRIMP (cardio z Apple Watch).
+    #: Używane, gdy sesja nie ma własnego hr_rest/hr_max. Dopasuj do siebie:
+    #: hr_rest to Twoje poranne spoczynkowe, hr_max ok. 220 - wiek (lub z testu).
+    hr_rest_default: int = 55
+    hr_max_default: int = 190
+
 
 # --- Temperatura nadgarstka --------------------------------------------------
 

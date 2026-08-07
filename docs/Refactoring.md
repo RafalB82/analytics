@@ -236,3 +236,35 @@ testami (161 przechodzi, pokrycie 90%), `ruff check` i `mypy` czyste.
   (rzuca `InvalidMetricError`, nie zwraca bool).
 - `readiness_integration.py`: `sleep_hours_today: float | None` zamiast kłamiącego `float`.
 - `config/settings.py`: `CONFIDENCE`/`STABILITY` (i klasy) dopisane do `__all__`.
+
+## Wydolnościowe (cardio) z Apple Watch w osobnym ACWR
+
+Rozszerzenie ACWR o sesje wydolnościowe (decyzja 2026-08-07).
+
+### Schemat
+- **Siłowe / kalisteniczne** → **wyłącznie z Hevy** (tonaż·RPE).
+- **Cardio / wydolnościowe** → z **Apple Watch** (Outdoor Cycling, Rowing,
+  Walking, Running, Swimming itd.), liczone **TRIMP** z tętna.
+- Dubl nie powstaje, bo źródła obsługują rozłączne kategorie: `apple_cardio.py`
+  odrzuca siłowe z Apple na starcie (biała lista typów cardio).
+
+### Dlaczego osobne ACWR
+Siła (tonaż: tysiące) i cardio (TRIMP: setki) to **różne jednostki** — nie można
+ich mieszać w jednym stosunku. Dlatego:
+- `build_cardio_acwr()` — osobny ACWR dla szeregu TRIMP,
+- `acwr_combined_modifier(strength, cardio)` — scala oba na poziomie gotowości
+  (maksimum punktów karnych), używane w `compute_full_readiness`.
+
+### TRIMP (Banister)
+`compute_trimp_session_load(avg_hr, duration_min, hr_rest, hr_max)`:
+```
+ratio = (HRavg - HRrest) / (HRmax - HRrest)
+TRIMP = czas * ratio * 0.64 * e^(1.92 * ratio)
+```
+W pełni automatyczny (bez ręcznego RPE). `hr_rest_default`/`hr_max_default`
+w `ACWRSettings` (dopasuj do siebie: rest = poranne spoczynkowe, max ≈ 220-wiek).
+
+### Wejście
+Nowy slot `apple_workouts` w schema (lista z `apple__list_recent_workouts`),
+przeciągnięty przez `validate_input` → `build_acwr` → `pipeline` → `run()`.
+Raport: `acwr_detail.cardio` (acute/chronic/ratio/zone/n_cardio_days).

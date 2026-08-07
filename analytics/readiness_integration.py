@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .acwr import ACWRResult, acwr_readiness_modifier
+from .acwr import ACWRResult, acwr_combined_modifier
 from .baseline import MetricPoint, compute_ewma_baseline, compute_trend_slope
 from .config import settings
 from .exceptions import MissingBaselineError
@@ -84,6 +84,7 @@ def compute_full_readiness(
     acwr_result: ACWRResult,
     temp_alert: TempAlert,
     spo2_confirmed: bool,
+    cardio_acwr: ACWRResult | None = None,
 ) -> ReadinessOutput:
 
     hrv_baseline = compute_ewma_baseline(hrv_series)
@@ -101,7 +102,7 @@ def compute_full_readiness(
         sleep_hours=sleep_hours_today,
     )
 
-    acwr_penalty = acwr_readiness_modifier(acwr_result)
+    acwr_penalty = acwr_combined_modifier(acwr_result, cardio_acwr)
     total = base + acwr_penalty
 
     zone, max_rpe, volume_note = classify_zone(total)

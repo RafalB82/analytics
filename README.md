@@ -63,7 +63,12 @@ python -m analytics.run_analysis '<json>'  # ręczny orchestrator
   ],
   "apple_temp": [ {"date": "2026-08-06", "value": 35.98} ],
   "hevy_workouts": [ /* z hevy__get-workouts, strony sklejone */ ],
-  "cardio_sessions": [ /* opcjonalne sesje cardio/MTB, sumowane do obciążenia ACWR */
+  "apple_workouts": [ /* z apple__list_recent_workouts — cardio z Apple Watch,
+     liczone TRIMP w OSOBNYM ACWR; siłowe z Apple są ignorowane (siła = Hevy) */
+    {"name": "Outdoor Cycling", "start": "2026-08-06T17:37:17",
+     "duration_min": 88.2, "avg_heart_rate_bpm": 143.5}
+  ],
+  "cardio_sessions": [ /* legacy, ręczne {"startTime","duration_minutes","rpe"} */
     {"startTime": "2026-08-05T08:00:00", "duration_minutes": 90, "rpe": 6}
   ],
   "params": {
@@ -72,6 +77,12 @@ python -m analytics.run_analysis '<json>'  # ręczny orchestrator
   }
 }
 ```
+
+> `apple_workouts`: sesje wydolnościowe z Apple Watch (cycling/rowing/walking/running/swimming).
+> Liczone jako TRIMP z tętna (automatycznie, bez ręcznego RPE) w **osobnym ACWR cardio**, bo
+> skala TRIMP (setki) różni się od tonażu z Hevy (tysiące). Siłowe/kalisteniczne z Apple są
+> odrzucane — siła pochodzi wyłącznie z Hevy (zero dubli). Oba ACWR łączone na poziomie
+> gotowości zestawem `acwr_combined_modifier` (maksimum stref).
 
 > `phase` = aktualny cel: `utrzymanie` (marża 0) / `redukcja` (−15%) / `masa` (+10%).
 > `bodyweight_kg` opcjonalny (gdy brak punktu wagi z Apple w danym dniu).

@@ -3,7 +3,8 @@
 Wdrożenie planu `analytics_refaktor/refactorig.md` na branchu `refactor/engineering-quality`.
 **Celem nadrzędnym było: nie zmienić żadnego wyniku algorytmicznego** — tylko podnieść
 utrzymywalność, testowalność i niezawodność. Podstawa (architektura fetch → analytics →
-JSON → LLM oraz determinizm obliczeń) pozostała nietknięta.
+JSON → LLM oraz determinizm obliczeń) pozostała nietknięta. Niniejszy plik dokumentuje
+zarówno refaktor inżynieryjny (1.0), jak i warstwę analityczną (2.0).
 
 ## Struktura docelowa
 
@@ -19,9 +20,14 @@ analytics/                 # pakiet
 ├── models.py              # F6  typowane modele Pydantic (DailyMetrics, TempAlertStatus, ...)
 ├── baseline.py / acwr.py / temperature.py / nutrition_adaptive.py
 ├── readiness_integration.py
+├── confidence.py            # faza 2.0: Confidence Score (0-100, High/Medium/Low)
+├── stability.py             # faza 3.0: Activity Stability (Stable/Moderately/Highly)
+├── metrics.py               # faza 6.0: centralny rejestr metryk
+├── pipeline.py              # faza 7.0: Analytics Pipeline (6 stage'ów)
+├── explain.py               # faza 9.0: Explainability Layer (reason[] dla LLM)
 ├── fetch_apple.py / fetch_hevy.py / fetch_mfp.py
-└── run_analysis.py        # F5  refaktor: parse_input / validate_input / build_* / run
-tests/                     # F7  113 testów, pokrycie 80%+ (algorytmy 100%)
+└── run_analysis.py          # F5  refaktor: parse_input / validate_input / build_* / run
+tests/                     # F7  190 testów, pokrycie ~90% (algorytmy 100%)
 .github/workflows/ci.yml   # F8  Ruff -> mypy -> pytest(coverage) na 3 wersjach Pythona
 pyproject.toml             # definicja pakietu + narzędzia (ruff, mypy, pytest)
 docs/
@@ -73,11 +79,101 @@ ANALYTICS_DEBUG=1 python -m analytics.demo_full
 ## Sekcja „nie zrobiono"
 
 - **F10 Visualization** — świadomie pominięte (brak realnej potrzeby przy podawaniu JSON).
-- **`models.py` jeszcze nie jest głównym nośnikiem outputu** — `run_analysis` nadal używa
-  `dataclass asdict` (Pydantic modele są gotowe i testowane z osobna, ale wpięcie pełnego
-  `AnalysisReport` to dalszy krok, bezpieczny i izolowany).
 - **cron/integracja z harmonogramem** — logi (F4) nabiorą pełnej wartości dopiero po
   wpięciu analizy do zadania cron; to kolejny krok poza zakresem tego refaktoru.
+
+---
+
+# Refaktor 2.0 — warstwa analityczna (analytics_refaktor/refactorig.md)
+
+Po domknięciu inżynieryjnego refaktoru 1.0 wykonaliśmy **fazy 2.0** — rozszerzenia
+analityczne, bez zmiany istniejących wyników algorytmicznych. Zasada nadrzędna pozostała:
+**nowe pola domyślnie `None` / wstecznie kompatybilne, determinizm nietknięty**.
+
+## Zrealizowane fazy 2.0
+
+### Confidence Score (`confidence.py`)
+
+Każda metryka dostaje wiarygodność 0-100 + etykietę **High / Medium / Low** z ważonych
+składowych (historia 30%, kompletność 25%, stabilność 25%, pokrycie 20%):
+
+```json
+"tdee": {"score": 98, "label": "High", "n_points": 14, "window_days": 7,
+         "completeness": 1.0, "stability": 0.928, "coverage": 1.0}
+```
+
+- `compute_confidence()` + `hr_series_stability()` (stabilność z współczynnika zmienności).
+- `ConfidenceSettings` w configu (wagi + progi 80/60).
+- Zwraca `None`, gdy za mało danych (< 3 pkt) — nie fabrykuje wiarygodności.
+- Objęte: hrv, rhr, tdee, acwr.
+
+### Activity Stability (`stability.py`)
+
+Kategoryzacja zmienności aktywności z avg 7/14/28 dni:
+`Stable` / `Moderately Variable` / `Highly Variable`.
+
+```json
+"activity_stability": {"avg_7d": 19214.3, "avg_14d": 19071.4,
+                       "avg_28d": 19071.4, "variation": 0.007, "category": "Stable"}
+```
+
+- `activity_stability()` + `StabilitySettings` (progi variation 0.10 / 0.25).
+
+### Weight Trend (rozszerzenie `nutrition_adaptive.compute_weight_trend`)
+
+Trend wagi zwraca teraz ustrukturyzowany `WeightTrend` zamiast gołego slope:
+`slope_kg_per_day`, `rolling_median_kg` (robustny środek ciężkości), `weekly_trend_kg`,
+`n_points`, `window_days`. Wpięty do `AnalysisReport.weight_trend` (z serii wag MFP).
+
+```json
+"weight_trend": {"slope_kg_per_day": 0.1, "rolling_median_kg": 70.45,
+                 "weekly_trend_kg": 0.7, "n_points": 10, "window_days": 14}
+```
+
+### Metrics Registry (`metrics.py`)
+
+Centralny rejestr metryk (tylko metadane — nie dubluje logiki/walidacji):
+`Metric(name, description, unit, normal_range, section)` + `METRICS` (10 metryk)
++ `METRIC_BY_NAME` + `metrics_summary()`.
+
+### Analytics Pipeline (`pipeline.py`)
+
+Jawna orkiestracja jako sekwencja stage'ów zamiast jednej wielkiej `run()`:
+
+```text
+InputValidation -> ModelBuilding -> Analytics -> Confidence -> Explain -> Serialization
+```
+
+- `PipelineContext` przenosi dane między stage'ami; `AnalyticsPipeline` + `PIPELINE`.
+- Stage'e są testowalne osobno i wymienialne.
+- `run()` deleguje do `PIPELINE`; test regresji potwierdza identyczny output.
+
+### Explainability Layer (`explain.py`)
+
+Każda metryka niesie listę strukturalnych powodów dla LLM:
+
+```json
+"explanations": {
+  "acwr": ["ACWR: strefa wysokie ryzyko (ratio=2.37)", "Pokrycie RPE: 100%"],
+  "tdee": ["TDEE: 4592 kcal (okno 7 dni)", "Cel: utrzymanie -> target 4592 kcal"]
+}
+```
+
+- `build_explanations()` — LLM używa strukturalnych przyczyn zamiast reverse-engineeringu.
+- Nowy stage `explain_stage` w pipeline.
+
+## Poprawki i uwagi
+
+- **Zakres wagi**: `40-200 kg` zamiast `20-400` (20 kg = kilkulatek, 400 = słoń).
+- **Confidence ACWR**: używa REALNEJ liczby dni z treningiem (`load>0`), nie dni
+  wypełnionych zerami przez `fill_missing_days` — unika sztucznego zawyżenia.
+- Waga z Apple pozostaje punktem kontrolnym; `weight_trend` wymaga serii ≥ 8 pomiarów
+  (aktualnie `None`, bo MFP nie dostarcza historii wagi).
+
+## Wstrzymane / daleka kolejka
+
+- **F10 / Visualization** — wstrzymane (brak konsumenta UI/CLI).
+- **Strategy Pattern / Plugins** — wstrzymane (gdy urośnie liczba celów/ modułów).
 
 ## Nowy model odżywiania (cel kaloryczny z aktywności)
 

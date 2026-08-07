@@ -80,7 +80,7 @@ def classify_zone(total_score: int) -> tuple[str, str, str]:
 def compute_full_readiness(
     hrv_series: list[MetricPoint],
     rhr_series: list[MetricPoint],
-    sleep_hours_today: float,
+    sleep_hours_today: float | None,
     acwr_result: ACWRResult,
     temp_alert: TempAlert,
     spo2_confirmed: bool,

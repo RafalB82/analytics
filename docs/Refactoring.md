@@ -189,3 +189,41 @@ Osobny commit po refaktorze strukturalnym — zmiana logiki odżywiania:
 Niezbędny bug w źródle: `health-auto-export-api` sumował te same pomiary zegarka
 z wielu identyfikatorów źródła Health Kit (dubel ~3x energii). Naprawiony deduplikacją
 po minucie (`_dedup_rows`) — osobny commit w tamtym repo (`2eaa491`).
+
+## Poprawki z audytu inżynieryjnego (branch fix/engineering-quality-audit)
+
+Naprawy po audycie kodu z 2026-08-07 (`audyt.md`), wszystkie zweryfikowane
+testami (161 przechodzi, pokrycie 90%), `ruff check` i `mypy` czyste.
+
+### 1. 🔴 Rozjazd faz TDEE ↔ białko (bug krytyczny)
+- `goal_margin` używa kluczy `redukcja/masa`, a `protein_g_per_kg` `deficyt/nadwyżka`.
+  `compute_tdee` przekazywał `goal` wprost do `compute_protein_target`, więc przy
+  `phase="redukcja"` białko cicho spadało na fallback **1.8 g/kg zamiast 2.2 g/kg**
+  (przy 71 kg = 28 g dziennie mniej, akurat w fazie ochrony mięśni).
+- Fix: jawna mapa `_GOAL_TO_PROTEIN_PHASE` (`redukcja→deficyt`, `masa→nadwyżka`)
+  używana w `compute_tdee`. Testy na PEŁNEJ ścieżce `compute_tdee(goal=..., bodyweight_kg=...)`
+  z asercją na `protein_g` (nie tylko `margin_pct`).
+
+### 2. 🟡 Eager-evaluated defaulty z configu
+- Wzorzec `alpha: float = _CFG.ewma_alpha` wyliczał wartość RAZ przy imporcie —
+  podmiana `settings.BASELINE`/`ACWR` w runtime nie miała żadnego efektu.
+- Fix: domyślne `None` + lazy lookup w ciele funkcji (`alpha = alpha if alpha is not None
+  else _CFG.ewma_alpha`) w `baseline.py` (6×), `acwr.py` (5×), `temperature.py` (2×),
+  `nutrition_adaptive.py` (2×). Zweryfikowane empirycznie przez `inspect.signature` i podmianę configu.
+
+### 3. 🟡 MTB / cardio brak w ACWR
+- ACWR liczył tylko tonaż z Hevy — jazda MTB nie wchodziła do obciążenia, zaniżając
+  chronic w tygodniach z rowerem.
+- Fix: `compute_cardio_session_load(duration_minutes, rpe)` w skali `min·RPE`
+  (analogicznie do tonaż×RPE), `cardio_session_daily_load(dict)`, oraz nowy slot
+  `cardio_sessions` w schema wejścia (`{"startTime","duration_minutes","rpe"}`)
+  sumowany do dziennego loadu przez `build_daily_load_series(..., cardio_sessions=...)`,
+  przeciągnięty przez `run_analysis.build_acwr` → `pipeline` → `run()`.
+
+### 4. 🟢 Drobne
+- `models.py`: `TempAlertPayload` przeniesiona przed `TempAlertStatus` (usuwa zależność
+  od `from __future__ import annotations`).
+- `validators/metrics.py`: docstring `ensure_sorted_ascending` zaktualizowany
+  (rzuca `InvalidMetricError`, nie zwraca bool).
+- `readiness_integration.py`: `sleep_hours_today: float | None` zamiast kłamiącego `float`.
+- `config/settings.py`: `CONFIDENCE`/`STABILITY` (i klasy) dopisane do `__all__`.

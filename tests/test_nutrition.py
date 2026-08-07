@@ -71,6 +71,16 @@ class TestComputeTdee:
         est = compute_tdee(_energy(), goal="utrzymanie")
         assert est.protein_g is None
 
+    def test_redukcja_protein_uses_deficit_phase(self):
+        # Pełna ścieżka: goal="redukcja" musi dać 2.2 g/kg (faza "deficyt"),
+        # NIE cichy fallback 1.8 g/kg. Regresja audytu #1.
+        est = compute_tdee(_energy(), goal="redukcja", bodyweight_kg=70.0)
+        assert est.protein_g == round(70 * 2.2, 0)
+
+    def test_masa_protein_uses_surplus_phase(self):
+        est = compute_tdee(_energy(), goal="masa", bodyweight_kg=70.0)
+        assert est.protein_g == round(70 * 1.8, 0)
+
     def test_activity_signals(self):
         # 2 dni z jawną basal/active, rózne minuty ćwiczeń
         est = compute_tdee(

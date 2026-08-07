@@ -63,6 +63,9 @@ python -m analytics.run_analysis '<json>'  # ręczny orchestrator
   ],
   "apple_temp": [ {"date": "2026-08-06", "value": 35.98} ],
   "hevy_workouts": [ /* z hevy__get-workouts, strony sklejone */ ],
+  "cardio_sessions": [ /* opcjonalne sesje cardio/MTB, sumowane do obciążenia ACWR */
+    {"startTime": "2026-08-05T08:00:00", "duration_minutes": 90, "rpe": 6}
+  ],
   "params": {
     "phase": "utrzymanie",
     "bodyweight_kg": 71.0

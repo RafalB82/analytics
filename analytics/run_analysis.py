@@ -98,7 +98,7 @@ def parse_input(raw: str) -> dict:
 # --- Faza 2: validate_input --------------------------------------------------
 
 
-def validate_input(payload: dict) -> tuple[str, date, dict, list, list, list, list]:
+def validate_input(payload: dict) -> tuple[str, date, dict, list, list, list, list, list]:
     """Weryfikuje źródło i obecność danych. Zwraca uporządkowane składowe."""
     source = payload.get("source")
     if source not in ALLOWED_SOURCES:
@@ -113,10 +113,11 @@ def validate_input(payload: dict) -> tuple[str, date, dict, list, list, list, li
     target = _parse_target(payload.get("target_date"))
     params = payload.get("params", {})
     hevy_workouts = payload.get("hevy_workouts", [])
+    cardio_sessions = payload.get("cardio_sessions", [])
     mfp_weight = payload.get("mfp_weight") or []
     apple_temp = payload.get("apple_temp") or []
 
-    return source, target, params, apple_daily, hevy_workouts, mfp_weight, apple_temp
+    return source, target, params, apple_daily, hevy_workouts, cardio_sessions, mfp_weight, apple_temp
 
 
 def _parse_target(s: str | None) -> date:
@@ -147,10 +148,14 @@ def build_apple_models(apple_daily: list, target: date, apple_temp: list) -> dic
     return apple_in
 
 
-def build_acwr(hevy_workouts: list, target: date) -> dict:
-    """Oblicza ACWR z treningów Hevy (acute/chronic/ratio + pokrycie RPE)."""
+def build_acwr(hevy_workouts: list, target: date, cardio_sessions: list | None = None) -> dict:
+    """Oblicza ACWR z treningów Hevy (+ opcjonalne sesje cardio/MTB).
+
+    cardio_sessions: lista {"startTime", "duration_minutes", "rpe"} —
+    obciążenie cardio sumuje się do dziennego loadu razem z tonażem z Hevy.
+    """
     start = target - timedelta(days=ACWR_LOOKBACK_DAYS)
-    daily_loads = build_daily_load_series(hevy_workouts, start, target)
+    daily_loads = build_daily_load_series(hevy_workouts, start, target, cardio_sessions=cardio_sessions)
     acute = acwr_mod.compute_acute_load(daily_loads, window=ACWR_CFG.acute_window)
     chronic = acwr_mod.compute_chronic_load(daily_loads, window=ACWR_CFG.chronic_window,
                                             use_ewma=ACWR_CFG.chronic_use_ewma)
@@ -293,6 +298,7 @@ def run(payload: dict) -> dict[str, Any]:
             params=payload.get("params", {}),
             apple_daily=payload.get("apple_daily", []),
             hevy_workouts=payload.get("hevy_workouts", []),
+            cardio_sessions=payload.get("cardio_sessions", []),
             mfp_weight=payload.get("mfp_weight") or [],
             apple_temp=payload.get("apple_temp", []),
         ))

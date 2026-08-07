@@ -77,8 +77,10 @@ def fill_missing_days(daily_loads: dict[date, float], start: date, end: date) ->
     return result
 
 
-def compute_acute_load(daily_series: list[SessionLoad], window: int = _CFG.acute_window) -> float:
+def compute_acute_load(daily_series: list[SessionLoad], window: int | None = None) -> float:
     """Średnia dzienna z ostatnich `window` dni (nie suma — łatwiej interpretować i porównywać z chronic)."""
+    if window is None:
+        window = _CFG.acute_window
     recent = daily_series[-window:]
     if not recent:
         return 0.0
@@ -88,9 +90,9 @@ def compute_acute_load(daily_series: list[SessionLoad], window: int = _CFG.acute
 
 def compute_chronic_load(
     daily_series: list[SessionLoad],
-    window: int = _CFG.chronic_window,
-    use_ewma: bool = _CFG.chronic_use_ewma,
-    alpha: float = _CFG.chronic_alpha,
+    window: int | None = None,
+    use_ewma: bool | None = None,
+    alpha: float | None = None,
 ) -> float:
     """
     Średnia dzienna z ostatnich `window` dni.
@@ -98,6 +100,12 @@ def compute_chronic_load(
     unika gwałtownych skoków przy "wypadaniu" starego dnia z okna,
     co jest znaną wadą prostego rolling average w oryginalnej metodzie.
     """
+    if window is None:
+        window = _CFG.chronic_window
+    if use_ewma is None:
+        use_ewma = _CFG.chronic_use_ewma
+    if alpha is None:
+        alpha = _CFG.chronic_alpha
     recent = daily_series[-window:]
     if not recent:
         return 0.0

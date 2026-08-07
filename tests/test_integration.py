@@ -193,9 +193,19 @@ class TestParseInput:
 
 class TestValidateInput:
     def test_valid_payload(self):
-        source, target, params, apple_daily, hevy, mfp, temp = validate_input(_payload())
+        source, target, params, apple_daily, hevy, cardio, mfp, temp = validate_input(_payload())
         assert source == "apple+hevy+mfp"
         assert target == date(2026, 8, 7)
+        assert cardio == []  # domyślnie brak sesji cardio
+
+    def test_payload_with_cardio(self):
+        p = _payload()
+        p["cardio_sessions"] = [
+            {"startTime": "2026-08-06T08:00:00", "duration_minutes": 90, "rpe": 6}
+        ]
+        source, target, params, apple_daily, hevy, cardio, mfp, temp = validate_input(p)
+        assert len(cardio) == 1
+        assert cardio[0]["rpe"] == 6
 
     def test_bad_source_raises(self):
         import pytest

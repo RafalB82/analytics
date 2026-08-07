@@ -86,14 +86,61 @@ def workout_daily_load(workout: dict) -> tuple[date, float] | None:
     return day, round(total, 1)
 
 
+def compute_cardio_session_load(duration_minutes: float, rpe: float) -> float:
+    """
+    Obciążenie sesji cardio (np. MTB) w TEJ SAMEJ skali co siłownia.
+    sRPE-load = czas (min) * RPE — analogicznie do tonaż * RPE w
+    compute_session_load. Czas jest tu odpowiednikiem "tonażu" (objętości),
+    RPE skaluje go do subiektywnego wysiłku.
+
+    duration_minutes: czas trwania sesji w minutach (np. 90 dla 1.5h MTB).
+    rpe: subiektywny wysiłek 1-10 (np. 6 = umiarkowanie ciężko).
+
+    Zwraca load w jednostkach "min·RPE", sumowalny per dzień razem
+    z tonażem z Hevy (oba to objętość-ważona-wysiłkiem).
+    """
+    if duration_minutes <= 0:
+        raise ValueError("duration_minutes musi być > 0")
+    if not (1 <= rpe <= 10):
+        raise ValueError("RPE musi być w 1-10")
+    return round(duration_minutes * rpe, 1)
+
+
+def cardio_session_daily_load(cardio_session: dict) -> tuple[date, float] | None:
+    """
+    Obciążenie jednej sesji cardio (MTB) przypięte do dnia.
+    Dict jak: {"startTime": "2026-08-05T08:00:00", "duration_minutes": 90, "rpe": 6}.
+    Zwraca (day, load) lub None gdy brak wymaganych pól.
+    """
+    duration = cardio_session.get("duration_minutes")
+    rpe = cardio_session.get("rpe")
+    if duration is None or rpe is None:
+        return None
+    try:
+        duration_f = float(duration)
+        rpe_f = float(rpe)
+    except (TypeError, ValueError):
+        return None
+    if duration_f <= 0 or not (1 <= rpe_f <= 10):
+        return None
+    day = _parse_date(cardio_session.get("startTime"))
+    return day, compute_cardio_session_load(duration_f, rpe_f)
+
+
 def build_daily_load_series(
     workouts: list[dict],
     start: date,
     end: date,
+    cardio_sessions: list[dict] | None = None,
 ) -> list[SessionLoad]:
     """
     Buduje pełny szereg dzienny (start..end włącznie, dni bez treningu = 0.0)
-    z listy treningów Hevy (każdy dict jak z hevy__get-workouts).
+    z listy treningów Hevy (każdy dict jak z hevy__get-workouts) ORAZ
+    opcjonalnych sesji cardio (np. MTB).
+
+    cardio_sessions: lista dictów {"startTime", "duration_minutes", "rpe"} —
+    obciążenie cardio (min·RPE) sumuje się per dzień razem z tonażem z Hevy,
+    więc wieczór siłowy + poranna jazda MTB obciążają ACWR łącznie.
 
     workouts: wszystkie treningi (można ciągnąć stronami i skleić).
     start/end: okno dla rolling window ACWR (np. end=today, start=today-28d).
@@ -104,6 +151,12 @@ def build_daily_load_series(
     pairs = []
     for w in workouts:
         r = workout_daily_load(w)
+        if r is not None and start <= r[0] <= end:
+            pairs.append(r)
+
+    # dołóż sesje cardio (MTB) do tego samego dziennego obciążenia
+    for c in (cardio_sessions or []):
+        r = cardio_session_daily_load(c)
         if r is not None and start <= r[0] <= end:
             pairs.append(r)
 

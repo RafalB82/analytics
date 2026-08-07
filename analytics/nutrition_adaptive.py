@@ -66,6 +66,21 @@ def _kj_to_kcal(kj: float) -> float:
     return kj / _CFG.kj_per_kcal
 
 
+#: mapu stosunek cel diety na fazę białkową (klucze `protein_g_per_kg`).
+#: Cele i fazy mają OSOBNE słowniki w configu z różnymi nazwami
+#: (redukcja/masa vs deficyt/nadwyżka) — ta mapa jest jedynym, jawnym
+#: połączeniem między nimi.
+_GOAL_TO_PROTEIN_PHASE = {
+    "redukcja": "deficyt",
+    "utrzymanie": "utrzymanie",
+    "masa": "nadwyżka",
+}
+
+
+def _protein_phase_for_goal(goal: str) -> str:
+    return _GOAL_TO_PROTEIN_PHASE.get(goal, "utrzymanie")
+
+
 def compute_tdee(
     energy_series: list[DailyEnergy],
     goal: str = "utrzymanie",
@@ -116,7 +131,7 @@ def compute_tdee(
 
     protein = None
     if bodyweight_kg:
-        protein = compute_protein_target(bodyweight_kg, phase=goal)
+        protein = compute_protein_target(bodyweight_kg, phase=_protein_phase_for_goal(goal))
 
     logger.info("TDEE(%dd): basal=%.0f active=%.0f -> %.0f kcal, marża %.0f%% -> cel %.0f kcal",
                 window, basal_kcal, active_kcal, tdee, margin * 100, target)
@@ -181,8 +196,8 @@ class WeightTrend:
 
 def compute_weight_trend(
     series: list[Any],
-    window_days: int = _CFG.weight_trend_window_days,
-    min_points: int = _CFG.weight_min_points,
+    window_days: int | None = None,
+    min_points: int | None = None,
 ) -> WeightTrend | None:
     """Trend liniowy + rolling median wagi (kg) z serii wielopunktowej.
 
@@ -195,6 +210,10 @@ def compute_weight_trend(
       - weekly_trend_kg: slope przeliczony na kg/tydzień
       - n_points / window_days: kontekst danych
     """
+    if window_days is None:
+        window_days = _CFG.weight_trend_window_days
+    if min_points is None:
+        min_points = _CFG.weight_min_points
     if len(series) < min_points:
         logger.debug("za mało punktów wagi do trendu: %d (min %d)", len(series), min_points)
         return None
@@ -218,13 +237,15 @@ def adjust_tdee(
     current_tdee: float,
     weight_trend_kg_per_day: float | None,
     target_trend_kg_per_week: float = 0.0,
-    max_single_adjustment_kcal: float = _CFG.max_single_adjustment_kcal,
+    max_single_adjustment_kcal: float | None = None,
 ) -> TDEEAdjustment:
     """(Rezerwa) korekta celu na bazie trendu wagi — gdy trend będzie dostępny.
 
     Zachowana dla kompatybilności; w nowym modelu TDEE z aktywności ta
     korekta zwykle nie jest potrzebna. Zwraca no-op gdy brak trendu.
     """
+    if max_single_adjustment_kcal is None:
+        max_single_adjustment_kcal = _CFG.max_single_adjustment_kcal
     if weight_trend_kg_per_day is None:
         return TDEEAdjustment(
             old_tdee=current_tdee, new_tdee=current_tdee,

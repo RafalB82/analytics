@@ -42,19 +42,17 @@ from __future__ import annotations
 import json
 import sys
 from dataclasses import asdict
-from datetime import date, timedelta
+from datetime import date
 from typing import Any, cast
 
 from pydantic import ValidationError
 
-from . import acwr as acwr_mod
 from . import baseline as baseline_mod
 from . import nutrition_adaptive as nutr_mod
 from . import temperature as temp_mod
 from .config import settings
 from .exceptions import InsufficientDataError, InvalidMetricError
 from .fetch_apple import build_apple_input
-from .fetch_hevy import build_daily_load_series, rpe_coverage
 from .logging import get_logger
 
 logger = get_logger("run_analysis")
@@ -63,8 +61,6 @@ ALLOWED_SOURCES = {"apple+hevy+mfp"}
 
 # Minimalna liczba punktów HRV do analizy (baseline + trend)
 MIN_HRV_POINTS = 6
-# Okno wstecz (dni) dla ACWR chronic (28d) + margines
-ACWR_LOOKBACK_DAYS = 35
 
 
 def _json_safe(o: Any) -> Any:
@@ -152,67 +148,6 @@ def build_apple_models(apple_daily: list, target: date, apple_temp: list) -> dic
                 len(hrv_series), len(apple_in["rhr_series"]),
                 apple_in["sleep_hours_today"], len(apple_in["temp_series"]))
     return apple_in
-
-
-def build_acwr(
-    hevy_workouts: list,
-    target: date,
-    cardio_sessions: list | None = None,
-    apple_workouts: list | None = None,
-) -> dict:
-    """Oblicza ACWR: siłowe z Hevy + wydolnościowe (cardio) z Apple Watch.
-
-    Schemat (decyzja 2026-08-07):
-    - SIŁA: wyłącznie z Hevy (tonaż·RPE). Dubl nie powstaje.
-    - CARDIO: z Apple Watch (TRIMP z tętna, automatyczny).
-    Oba liczone w OSOBNYM ACWR (różne jednostki — tonaż tysiące, TRIMP
-    setki), łączone na poziomie gotowości przez `acwr_combined_modifier`
-    (maksimum stref) gdziekolwiek jest konsumowane.
-
-    cardio_sessions: legacy, ręczne {"startTime", "duration_minutes", "rpe"}
-    — sumowane do dziennego loadu siłowego (zachowane dla kompatybilności).
-    apple_workouts: list workoutów z Apple Watch (jak apple__list_recent_workouts)
-    — filtrowane do cardio (ignorowane siłowe/kalisteniczne) i liczone TRIMP.
-    """
-    start = target - timedelta(days=ACWR_LOOKBACK_DAYS)
-
-    # --- SIŁA (Hevy) ---
-    daily_loads = build_daily_load_series(hevy_workouts, start, target, cardio_sessions=cardio_sessions)
-    acute = acwr_mod.compute_acute_load(daily_loads, window=settings.ACWR.acute_window)
-    chronic = acwr_mod.compute_chronic_load(daily_loads, window=settings.ACWR.chronic_window,
-                                            use_ewma=settings.ACWR.chronic_use_ewma)
-    acwr_res = acwr_mod.acwr_ratio(acute, chronic)
-    rpe_cov = rpe_coverage(hevy_workouts)
-
-    # --- CARDIO (Apple Watch) ---
-    cardio_res = None
-    cardio_detail = None
-    if apple_workouts:
-        from .apple_cardio import build_apple_cardio_series
-        cardio_series = build_apple_cardio_series(apple_workouts, start, target)
-        cardio_res = acwr_mod.build_cardio_acwr(cardio_series)
-        cardio_detail = {
-            "acute": cardio_res.acute_load,
-            "chronic": cardio_res.chronic_load,
-            "ratio": cardio_res.ratio,
-            "zone": cardio_res.zone,
-            "n_cardio_days": sum(1 for s in cardio_series if s.load > 0),
-        }
-
-    logger.info("ACWR siła: ratio=%.2f (%s), pokrycie RPE=%.1f%% | cardio: %s",
-                acwr_res.ratio, acwr_res.zone, rpe_cov["coverage_pct"],
-                cardio_res.ratio if cardio_res else "brak")
-    result = {
-        "result": acwr_res,
-        "acute": acute,
-        "chronic": chronic,
-        "rpe_coverage": rpe_cov,
-        "daily_loads": daily_loads,
-    }
-    if cardio_res is not None:
-        result["cardio"] = cardio_res
-        result["cardio_detail"] = cardio_detail
-    return result
 
 
 # --- Faza 4: analyse (logika analityczna) ------------------------------------

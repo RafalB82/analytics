@@ -17,6 +17,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import date
 from typing import Any
 
+from . import acwr as acwr_mod
 from . import baseline as baseline_mod
 from . import confidence as conf_mod
 from . import explain as explain_mod
@@ -29,7 +30,6 @@ from .run_analysis import (
     _build_temp_status,
     _compute_goal,
     _temp_output,
-    build_acwr,
     build_apple_models,
     validate_input,
 )
@@ -91,9 +91,9 @@ def model_building_stage(ctx: PipelineContext) -> PipelineContext:
     """Stage 2: budowa modeli / serii analitycznych (Apple + Hevy)."""
     assert ctx.target is not None, "target nie ustawiony po walidacji"
     ctx.models = build_apple_models(ctx.apple_daily, ctx.target, ctx.apple_temp)
-    ctx.acwr_info = build_acwr(ctx.hevy_workouts, ctx.target,
-                               cardio_sessions=ctx.cardio_sessions,
-                               apple_workouts=ctx.apple_workouts)
+    ctx.acwr_info = acwr_mod.build_acwr(ctx.hevy_workouts, ctx.target,
+                                        cardio_sessions=ctx.cardio_sessions,
+                                        apple_workouts=ctx.apple_workouts)
     return ctx
 
 

@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """
-run_analysis.py — RĘCZNY orchestrator rozszerzonej analizy gotowości.
+run_analysis.py — cienki CLI (thin CLI) dla analizy gotowości.
 
-Łączy moduły (baseline / acwr / temperature / nutrition_adaptive /
-readiness_integration) w jedną, deterministyczną analizę.
+Cała logika analityczna żyje w modułach dziedzinowych (analytics/acwr.py,
+fetch_apple.py, temperature.py, nutrition_adaptive.py, readiness_integration.py)
+i jest orkiestrowana przez AnalyticsPipeline (analytics/pipeline.py). Ten plik
+zawiera wyłącznie: parse_input, run() (delegacja do PIPELINE), main(), _json_safe,
+logowanie i obsługę błędów.
 
 ŹRÓDŁA DANYCH (TYLKO Apple + Hevy + MFP):
     - Apple MCP  -> HRV, RHR, sen          (apple__get_daily_activity_range)
@@ -31,11 +34,12 @@ INPUT JSON:
 
 OUTPUT: JSON z sekcjami readiness / acwr / temperature / tdee / baseline_trends.
 
-Struktura (każda funkcja ma jedno zadanie):
-    parse_input -> validate_input -> build_apple_models -> calculate_metrics
-                -> serialize_output -> (save_report)
-Błędy: `InsufficientDataError` -> fallback (nie fatal); `InvalidMetricError`
--> błąd danych (propagowany). Logi strukturalne przez analytics.logging.
+Struktura (thin CLI):
+    main() -> parse_input -> run() -> PIPELINE.run() (analytics/pipeline.py)
+Orkiestrację (InputValidation -> ModelBuilding -> Analytics -> Confidence ->
+Serialization) realizuje AnalyticsPipeline. Błędy: `InsufficientDataError` ->
+fallback (nie fatal); `InvalidMetricError` -> błąd danych (propagowany). Logi
+strukturalne przez analytics.logging.
 """
 from __future__ import annotations
 
@@ -63,9 +67,6 @@ def _json_safe(o: Any) -> Any:
     if isinstance(o, np.generic):
         return o.item()
     return o
-
-
-# --- Faza 1: parse_input -----------------------------------------------------
 
 
 def parse_input(raw: str) -> dict:

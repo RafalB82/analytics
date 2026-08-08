@@ -151,4 +151,3 @@ kaloryczny z aktywności), `baseline_trends` (HRV/RHR trend + R²), `inputs`
 
 - 249 testów (jednostkowe + integracyjne)
 - Ruff + mypy czyste; GitHub Actions: Ruff i mypy na 3.12, pytest+coverage na 3.10/3.12/3.13
-- Szczegóły refaktoru: `docs/Refactoring.md`, `docs/small_refactor.md`

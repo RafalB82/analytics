@@ -41,14 +41,10 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import date
 from typing import Any, cast
 
 from pydantic import ValidationError
 
-from . import baseline as baseline_mod
-from . import temperature as temp_mod
-from .config import settings
 from .exceptions import InsufficientDataError, InvalidMetricError
 from .logging import get_logger
 
@@ -81,33 +77,6 @@ def parse_input(raw: str) -> dict:
     if not isinstance(payload, dict):
         raise InvalidMetricError("input_json", type(payload).__name__, "oczekiwano obiektu JSON")
     return payload
-
-
-# --- Faza 4: analyse (logika analityczna) ------------------------------------
-
-
-def _build_temp_status(temp_series, hrv_series, target: date) -> temp_mod.TempAlert:
-    """Buduje obiekt TempAlert z serii temperatury i HRV (override dla readiness)."""
-    if not temp_series:
-        return temp_mod.TempAlert(
-            triggered=False, deviation_c=0.0, baseline_c=0.0, severity="brak",
-            combined_with_hrv_drop=False,
-        )
-
-    bl = temp_mod.compute_temp_baseline(temp_series)
-    current_points = [p for p in temp_series if p.day == target]
-    current = current_points[0].wrist_temp_c if current_points else temp_series[-1].wrist_temp_c
-
-    hrv_dropped = False
-    if hrv_series:
-        bl_hrv = baseline_mod.compute_ewma_baseline(hrv_series)
-        if bl_hrv and bl_hrv.deviation_pct <= -10:
-            hrv_dropped = True
-
-    alert = temp_mod.temp_deviation_alert(current=current, baseline=bl, hrv_dropped=hrv_dropped)
-    msg = temp_mod.build_temp_override_message(alert, spo2_confirmed=False)
-    logger.debug("temp override: %s", msg if msg else "brak")
-    return alert
 
 
 def run(payload: dict) -> dict[str, Any]:

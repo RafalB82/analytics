@@ -17,6 +17,7 @@ from datetime import date
 
 import numpy as np
 
+from .baseline import compute_ewma_baseline
 from .config import settings
 from .logging import get_logger
 
@@ -149,3 +150,27 @@ def serialize_temp_output(alert, temp_series, target: date) -> dict:
         "alert": asdict(alert),
         "override_message": build_temp_override_message(alert, spo2_confirmed=False),
     }
+
+
+def build_temp_alert(temp_series, hrv_series, target: date) -> TempAlert:
+    """Buduje obiekt TempAlert z serii temperatury i HRV (override dla readiness)."""
+    if not temp_series:
+        return TempAlert(
+            triggered=False, deviation_c=0.0, baseline_c=0.0, severity="brak",
+            combined_with_hrv_drop=False,
+        )
+
+    bl = compute_temp_baseline(temp_series)
+    current_points = [p for p in temp_series if p.day == target]
+    current = current_points[0].wrist_temp_c if current_points else temp_series[-1].wrist_temp_c
+
+    hrv_dropped = False
+    if hrv_series:
+        bl_hrv = compute_ewma_baseline(hrv_series)
+        if bl_hrv and bl_hrv.deviation_pct <= -10:
+            hrv_dropped = True
+
+    alert = temp_deviation_alert(current=current, baseline=bl, hrv_dropped=hrv_dropped)
+    msg = build_temp_override_message(alert, spo2_confirmed=False)
+    logger.debug("temp override: %s", msg if msg else "brak")
+    return alert

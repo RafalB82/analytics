@@ -28,7 +28,6 @@ from .config import settings
 from .fetch_apple import build_apple_models
 from .fetch_mfp import to_weight_series
 from .readiness_integration import compute_full_readiness
-from .run_analysis import _build_temp_status
 from .validators import validate_input
 
 
@@ -98,7 +97,7 @@ def analytics_stage(ctx: PipelineContext) -> PipelineContext:
     """Stage 3: logika analityczna (readiness, temp, TDEE, trendy)."""
     m = ctx.models
     assert ctx.target is not None
-    ctx.temp_alert = _build_temp_status(m["temp_series"], m["hrv_series"], ctx.target)
+    ctx.temp_alert = temp_mod.build_temp_alert(m["temp_series"], m["hrv_series"], ctx.target)
     ctx.readiness = compute_full_readiness(
         hrv_series=m["hrv_series"],
         rhr_series=m["rhr_series"],

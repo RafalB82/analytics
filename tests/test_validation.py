@@ -132,12 +132,14 @@ class TestValidateInput:
     """Testy validate_input (przeniesiony do validators/input.py, krok 2/9)."""
 
     def test_valid_returns_components(self):
-        source, target, params, apple_daily, hevy, mfp, temp = validate_input(_input_payload())
+        source, target, params, apple_daily, hevy, app_wk, cardio, mfp, temp = validate_input(_input_payload())
         assert source == "apple+hevy+mfp"
         assert target == date(2026, 8, 7)
         assert apple_daily
         assert params == {}
         assert hevy == []
+        assert app_wk == []
+        assert cardio == []
         assert mfp == []
         assert temp == []
 
@@ -162,6 +164,5 @@ class TestValidateInput:
         assert target == date.today()
 
     def test_optional_fields_default_empty(self):
-        out = validate_input(_input_payload(target_date="2026-08-07"))
-        *_, hevy, mfp, temp = out
-        assert hevy == [] and mfp == [] and temp == []
+        _, _, _, _, hevy, app_wk, cardio, mfp, temp = validate_input(_input_payload(target_date="2026-08-07"))
+        assert hevy == [] and app_wk == [] and cardio == [] and mfp == [] and temp == []

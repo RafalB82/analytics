@@ -106,6 +106,27 @@ def compute_chronic_load(
     use_ewma=True (zalecane): EWMA zamiast prostego rolling mean —
     unika gwałtownych skoków przy "wypadaniu" starego dnia z okna,
     co jest znaną wadą prostego rolling average w oryginalnej metodzie.
+
+    COLD-START FIX: EWMA inicjalizowana pojedynczym punktem (`values[0]`)
+    nadaje pierwszemu dniu okna wagę nieproporcjonalnie dużą względem
+    `alpha` (przy alpha=0.05 ten punkt "waży" znacznie więcej niż powinien
+    jeszcze po 20+ krokach rekurencji) — wynik ratio potrafi wtedy zależeć
+    od TEGO, który konkretny dzień (trening czy odpoczynek) wypadł jako
+    pierwszy w oknie, a nie od faktycznego rozkładu obciążenia.
+
+    Rozważaliśmy rozgrzewkę EWMA na danych SPRZED okna (margines
+    ACWR_LOOKBACK_DAYS > chronic_window w build_acwr) — odrzucone: fill_missing_days
+    zeruje zarówno prawdziwe dni odpoczynkowe, jak i dni poza faktycznym
+    zasięgiem historii treningowej użytkownika, i na poziomie SessionLoad
+    nie da się tych dwóch przypadków odróżnić. Branie zer "spoza zasięgu
+    danych" jako sygnału odpoczynku zaniżałoby chronic tak samo błędnie,
+    jak cold-start zawyżał go wcześniej (patrz test_returns_full_structure -
+    28 dni realnego treningu, ale margines przed nimi to same zera
+    "brak danych", nie realny wypoczynek).
+
+    Zamiast tego: seed EWMA to średnia z CAŁEGO właściwego okna (nie sam
+    pierwszy punkt) — usuwa zależność wyniku od pozycji pierwszego dnia
+    treningowego w oknie, bez ryzykownego zgadywania co jest poza oknem.
     """
     if window is None:
         window = settings.ACWR.chronic_window
@@ -113,6 +134,7 @@ def compute_chronic_load(
         use_ewma = settings.ACWR.chronic_use_ewma
     if alpha is None:
         alpha = settings.ACWR.chronic_alpha
+
     recent = daily_series[-window:]
     if not recent:
         return 0.0
@@ -121,8 +143,12 @@ def compute_chronic_load(
     if not use_ewma:
         return round(float(np.mean(values)), 1)
 
-    ewma = values[0]
-    for v in values[1:]:
+    # seed = średnia całego okna (nie tylko pierwszy punkt) -> wynik nie
+    # zależy od tego, czy okno akurat zaczyna się dniem treningowym czy
+    # odpoczynkowym; EWMA wciąż "dojeżdża" przez pełne `values`, więc
+    # nowsze dni nadal mają większą wagę zgodnie z alpha
+    ewma = float(np.mean(values))
+    for v in values:
         ewma = alpha * v + (1 - alpha) * ewma
     return round(float(ewma), 1)
 

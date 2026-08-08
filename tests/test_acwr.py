@@ -84,6 +84,62 @@ class TestAcuteChronic:
     def test_chronic_returns_zero_when_empty(self):
         assert compute_chronic_load([], window=28) == 0.0
 
+    def test_chronic_constant_load_converges_to_that_load(self):
+        """Sanity: chronic na stałym obciążeniu powinien zbiec blisko tej wartości
+        (regresja dla poprawki cold-start — patrz test_cold_start_position_independence)."""
+        start = date(2026, 7, 1)
+        series = _daily([100.0] * 28, start)
+        chronic = compute_chronic_load(series, window=28)
+        assert chronic == pytest.approx(100.0, abs=0.1)
+
+    def test_cold_start_bug_position_no_longer_shrinks_gap(self):
+        """AUDYT fix: EWMA inicjalizowana values[0] (stara implementacja) sztucznie
+        ZBLIŻAŁA wyniki dwóch serii o identycznej sumie, ale przeciwnym rozkładzie
+        w czasie -- bo pierwszy punkt okna dostawał wagę nieproporcjonalną do alpha,
+        maskując to, GDZIE w oknie leżało obciążenie. EWMA poprawnie liczona powinna
+        różnicować świeże obciążenie (wysoki chronic) od dawno wygasłego (niski chronic),
+        nie zacierać tę różnicę.
+
+        Seria A: trening skupiony w OSTATNIM tygodniu 28-dniowego okna (świeży).
+        Seria B: identyczna suma load, ale skupiona w PIERWSZYM dniu okna (wygasły).
+        Oczekiwanie: chronic(A) musi być wyraźnie WYŻSZY niż chronic(B) -- świeże
+        obciążenie waży więcej w EWMA z natury metody, nie mniej.
+        """
+        start = date(2026, 7, 1)
+        vals_recent = [0.0] * 20 + [2000.0] * 8   # trening w ostatnim tygodniu okna
+        vals_old = [2000.0] + [0.0] * 27          # cały load w dniu 1, potem cisza
+
+        series_recent = _daily(vals_recent, start)
+        series_old = _daily(vals_old, start)
+
+        chronic_recent = compute_chronic_load(series_recent, window=28)
+        chronic_old = compute_chronic_load(series_old, window=28)
+
+        assert chronic_recent > chronic_old
+        # różnica musi być wyraźna (nie tylko formalnie większa) -- stary kod
+        # (values[0] jako seed) dawał 673 vs 501, czyli różnicę ~172 mimo,
+        # że fizjologicznie to skrajnie różne sytuacje (świeży trening vs
+        # miesiąc ciszy po jednej sesji). Wymagamy wyraźnego rozjazdu.
+        assert chronic_recent - chronic_old > 400
+
+    def test_chronic_independent_of_which_day_starts_window(self):
+        """Dwie serie o TEJ SAMEJ regularnej rutynie (trening co 2 dni, stały
+        load), różniące się tylko tym, czy okno zaczyna się dniem treningowym
+        czy odpoczynkowym, powinny dać zbliżony chronic -- nie zależny od
+        przypadkowej fazy cyklu w momencie odcięcia okna (stary bug: seed=
+        values[0] robił wynik wrażliwym właśnie na to przesunięcie fazowe)."""
+        start = date(2026, 7, 1)
+        # rutyna: trening (150) / odpoczynek (0), naprzemiennie, 28 dni
+        pattern_start_training = [150.0 if i % 2 == 0 else 0.0 for i in range(28)]
+        pattern_start_rest = [150.0 if i % 2 == 1 else 0.0 for i in range(28)]
+
+        c1 = compute_chronic_load(_daily(pattern_start_training, start), window=28)
+        c2 = compute_chronic_load(_daily(pattern_start_rest, start), window=28)
+
+        # różnica powinna być mała względem skali wartości (rutyna identyczna,
+        # różni się tylko przesunięciem fazowym o 1 dzień)
+        assert abs(c1 - c2) < 0.15 * max(c1, c2)
+
 
 class TestAcwrRatio:
     def test_optimal_zone(self):

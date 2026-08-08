@@ -74,6 +74,16 @@ class ACWRSettings:
     #: element wzoru TRIMP.
     hr_reference_floor_bpm: int | None = 170
 
+    #: próg (dni bez treningu z rzędu, licząc wstecz od target) do wykrycia
+    #: "luki treningowej" (detraining gap) — ACWR ratio samo w sobie NIE
+    #: łapie ryzyka pierwszego powrotu po przerwie (Gabbett 2016 / Impellizzeri
+    #: 2020: acute:chronic nie modeluje utraty tolerancji tkanki). Patrz
+    #: detect_training_gap.
+    gap_min_days: int = 7
+    #: powyżej tego progu luka jest klasyfikowana jako "długa" (ostrzejszy
+    #: override w komunikacie) zamiast "krótka".
+    gap_long_days: int = 14
+
 
 # --- Temperatura nadgarstka --------------------------------------------------
 

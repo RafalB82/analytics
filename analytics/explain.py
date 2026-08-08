@@ -55,6 +55,20 @@ def _temperature_reasons(temp: dict) -> list[str]:
     return reasons
 
 
+def _gap_reasons(gap: dict | None) -> list[str] | None:
+    """Powody luki treningowej — None gdy brak sygnału (żeby nie zaśmiecać
+    explanations kluczem bez treści, spójnie z resztą modułu, gdzie brak
+    sygnału po prostu pomija sekcję)."""
+    if not gap or not gap.get("detected"):
+        return None
+    days = gap.get("gap_days")
+    severity = gap.get("severity", "?")
+    reasons = [f"Luka treningowa: {days} dni bez treningu (severity: {severity})"]
+    if gap.get("resuming_today"):
+        reasons.append("Dziś pierwszy powrót po przerwie — ACWR ratio tego nie odzwierciedla")
+    return reasons
+
+
 def _tdee_reasons(goal: dict) -> list[str]:
     if goal.get("status") != "ok":
         return ["Cel kaloryczny niedostępny (brak danych energetycznych)"]
@@ -77,6 +91,7 @@ def build_explanations(
     rpe_coverage: dict | None,
     temperature: dict,
     goal: dict,
+    gap: dict | None = None,
 ) -> dict[str, list[str]]:
     """Buduje explanations = {metric_name: [reason, ...]} dla AnalysisReport.
 
@@ -91,6 +106,9 @@ def build_explanations(
         ex["rhr"] = _rhr_reasons(rhr_deviation_bpm)
     ex["sleep"] = _sleep_reasons(sleep_hours, sleep_missing)
     ex["acwr"] = _acwr_reasons(acwr, rpe_coverage)
+    gap_reasons = _gap_reasons(gap)
+    if gap_reasons is not None:
+        ex["gap"] = gap_reasons
     ex["temperature"] = _temperature_reasons(temperature)
     ex["tdee"] = _tdee_reasons(goal)
 

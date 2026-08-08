@@ -12,9 +12,11 @@ from analytics.acwr import (
     acwr_readiness_modifier,
     aggregate_daily_loads,
     build_acwr,
+    build_gap_override_message,
     compute_acute_load,
     compute_chronic_load,
     compute_session_load,
+    detect_training_gap,
     fill_missing_days,
 )
 from analytics.fetch_hevy import (
@@ -263,11 +265,11 @@ def _hevy_load(day: date, weight: float = 100.0) -> dict:
 
 class TestBuildAcwr:
     def test_returns_full_structure(self):
-        """build_acwr zwraca dict z result/acute/chronic/rpe_coverage/daily_loads."""
+        """build_acwr zwraca dict z result/acute/chronic/rpe_coverage/daily_loads/gap."""
         target = date(2026, 8, 7)
         workouts = [_hevy_load(target - timedelta(days=i), weight=100.0) for i in range(28)]
         out = build_acwr(workouts, target)
-        assert set(out) == {"result", "acute", "chronic", "rpe_coverage", "daily_loads"}
+        assert set(out) == {"result", "acute", "chronic", "rpe_coverage", "daily_loads", "gap"}
         assert out["result"].ratio == 1.0
         assert out["result"].zone == "optymalna"
         # daily_loads: okno start..end włącznie = ACWR_LOOKBACK_DAYS + 1 dni
@@ -306,3 +308,137 @@ class TestBuildAcwr:
         assert out["rpe_coverage"]["total_working"] == 2
         assert out["rpe_coverage"]["with_rpe"] == 1
         assert out["rpe_coverage"]["coverage_pct"] == 50.0
+
+
+class TestDetectTrainingGap:
+    def test_no_gap_continuous_training(self):
+        """Trening co drugi dzień, ostatni dzień przed target też treningowy -> brak luki."""
+        target = date(2026, 8, 7)
+        series = _daily([100.0, 0.0, 100.0, 0.0, 100.0, 0.0, 100.0], start=target - timedelta(days=6))
+        gap = detect_training_gap(series, target)
+        assert gap.detected is False
+        assert gap.severity == "brak"
+
+    def test_short_gap_below_threshold_not_detected(self):
+        """2 dni przerwy < gap_min_days (7) -> nie zgłaszamy luki."""
+        target = date(2026, 8, 7)
+        # trening w target-3 (04.08), potem 2 dni zer (05.08, 06.08) przed target
+        series = _daily([0.0, 0.0, 0.0, 100.0, 0.0, 0.0, 0.0], start=target - timedelta(days=6))
+        gap = detect_training_gap(series, target)
+        assert gap.detected is False
+        assert gap.gap_days == 2
+
+    def test_gap_exactly_at_threshold_detected(self):
+        """Dokładnie gap_min_days (7) dni zer przed target -> wykryta, severity krótka."""
+        target = date(2026, 8, 15)
+        # trening w dniu target-8, potem 7 dni zer (target-7..target-1), target sam treningowy
+        series = _daily([100.0] + [0.0] * 7 + [100.0], start=target - timedelta(days=8))
+        gap = detect_training_gap(series, target)
+        assert gap.detected is True
+        assert gap.gap_days == 7
+        assert gap.severity == "krótka"
+        assert gap.last_training_day == target - timedelta(days=8)
+
+    def test_long_gap_detected(self):
+        """>= gap_long_days (14) dni zer -> severity długa."""
+        target = date(2026, 8, 21)
+        series = _daily([100.0] + [0.0] * 14 + [100.0], start=target - timedelta(days=15))
+        gap = detect_training_gap(series, target)
+        assert gap.detected is True
+        assert gap.gap_days == 14
+        assert gap.severity == "długa"
+
+    def test_resuming_today_flag(self):
+        """resuming_today=True gdy target sam jest dniem treningowym."""
+        target = date(2026, 8, 15)
+        series = _daily([100.0] + [0.0] * 7 + [100.0], start=target - timedelta(days=8))
+        gap = detect_training_gap(series, target)
+        assert gap.resuming_today is True
+
+    def test_not_resuming_today_when_target_is_rest_day(self):
+        """resuming_today=False gdy target sam jest dniem odpoczynku (luka trwa dalej)."""
+        target = date(2026, 8, 15)
+        series = _daily([100.0] + [0.0] * 8, start=target - timedelta(days=8))
+        gap = detect_training_gap(series, target)
+        assert gap.detected is True
+        assert gap.resuming_today is False
+
+    def test_all_zeros_no_prior_history_not_detected(self):
+        """Cała dostępna historia to same zera (brak treningu w zasięgu danych)
+        -> NIE raportujemy luki (nie da się odróżnić od 'brak danych sprzed okna',
+        patrz docstring compute_chronic_load o tym samym ograniczeniu)."""
+        target = date(2026, 8, 15)
+        series = _daily([0.0] * 10, start=target - timedelta(days=9))
+        gap = detect_training_gap(series, target)
+        assert gap.detected is False
+        assert gap.last_training_day is None
+
+    def test_empty_series_returns_no_gap(self):
+        gap = detect_training_gap([], date(2026, 8, 15))
+        assert gap.detected is False
+        assert gap.gap_days == 0
+        assert gap.last_training_day is None
+
+    def test_custom_thresholds(self):
+        """min_gap_days / long_gap_days parametryzowalne (spójnie z resztą modułu)."""
+        target = date(2026, 8, 10)
+        series = _daily([100.0, 0.0, 0.0, 0.0, 100.0], start=target - timedelta(days=4))
+        gap = detect_training_gap(series, target, min_gap_days=2, long_gap_days=5)
+        assert gap.detected is True
+        assert gap.severity == "krótka"  # 3 dni < long_gap_days=5
+
+
+class TestBuildGapOverrideMessage:
+    def test_none_when_not_detected(self):
+        gap = detect_training_gap([], date(2026, 8, 15))
+        assert build_gap_override_message(gap) is None
+
+    def test_none_when_detected_but_not_resuming_today(self):
+        """Luka wykryta w historii, ale target sam nie jest dniem treningowym
+        -> brak komunikatu 'dzisiaj' (nie ma czego ostrzegać na dziś)."""
+        target = date(2026, 8, 15)
+        series = _daily([100.0] + [0.0] * 8, start=target - timedelta(days=8))
+        gap = detect_training_gap(series, target)
+        assert gap.resuming_today is False
+        assert build_gap_override_message(gap) is None
+
+    def test_short_gap_message_on_resume(self):
+        target = date(2026, 8, 15)
+        series = _daily([100.0] + [0.0] * 7 + [100.0], start=target - timedelta(days=8))
+        gap = detect_training_gap(series, target)
+        msg = build_gap_override_message(gap)
+        assert msg is not None
+        assert "7 dniach przerwy" in msg
+        assert "UWAGA" not in msg  # krótka luka -> ton ostrożny, nie alarmowy
+
+    def test_long_gap_message_is_stronger(self):
+        target = date(2026, 8, 21)
+        series = _daily([100.0] + [0.0] * 14 + [100.0], start=target - timedelta(days=15))
+        gap = detect_training_gap(series, target)
+        msg = build_gap_override_message(gap)
+        assert msg is not None
+        assert "UWAGA" in msg
+        assert "14 dniach przerwy" in msg
+
+
+class TestBuildAcwrGapIntegration:
+    def test_gap_present_in_output_after_break(self):
+        """build_acwr integruje detect_training_gap na szeregu Hevy -> gap w wyniku."""
+        target = date(2026, 8, 21)
+        # 14 dni stabilnego treningu (co drugi dzień), potem 14 dni przerwy, potem powrót
+        workouts = []
+        for i in range(14):
+            if i % 2 == 0:
+                workouts.append(_hevy_load(target - timedelta(days=27 - i), weight=100.0))
+        workouts.append(_hevy_load(target, weight=100.0))  # powrót dokładnie w target
+
+        out = build_acwr(workouts, target)
+        assert out["gap"].detected is True
+        assert out["gap"].resuming_today is True
+        assert out["gap"].severity == "długa"
+
+    def test_gap_absent_when_continuous(self):
+        target = date(2026, 8, 7)
+        workouts = [_hevy_load(target - timedelta(days=i), weight=100.0) for i in range(28)]
+        out = build_acwr(workouts, target)
+        assert out["gap"].detected is False

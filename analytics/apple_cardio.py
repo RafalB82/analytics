@@ -202,7 +202,10 @@ def apple_workout_daily_load(workout: dict) -> tuple[date, float] | None:
         return None
     if avg_hr_f <= 0 or duration_f <= 0:
         return None
-    # patologiczne max_hr (<= spoczynkowe) — odrzuć sesję, nie wywalaj pipeline
+    # max_hr ujemny/zerowy (artefakt) — odrzuć sesję, nie wywalaj pipeline.
+    # Uwaga: to tylko sanity-check na <= 0; właściwa walidacja peak <= rest
+    # siedzi wewnątrz compute_trimp_session_load (raise ValueError) i jest
+    # łapana przez except ValueError niżej.
     if max_hr_f is not None and max_hr_f <= 0:
         return None
 

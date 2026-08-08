@@ -48,10 +48,17 @@ def compute_temp_baseline(series: list[TempPoint], window: int | None = None) ->
     surowe odchylenie od Apple, ten baseline będzie bliski 0 i służy
     raczej do wygładzenia szumu niż wyznaczenia nowej normy od zera.
     Jeśli pobierasz bezwzględną temperaturę, licz normalnie.
+
+    Spójnie z baseline.compute_ewma_baseline: ostatni element serii
+    (dzień bieżący, dla którego liczysz odchylenie) NIE wchodzi do
+    baseline. Gdyby trafił do okna, baseline "gonił" za dzisiejszym
+    spike'em i tłumił wykrywane odchylenie (np. +0.5°C na 14-dniowym
+    oknie dałoby ~0.464 zamiast 0.5). Dzień bieżący jest przekazywany
+    osobno jako `current` w temp_deviation_alert.
     """
     if window is None:
         window = settings.TEMPERATURE.baseline_window
-    recent = [p.wrist_temp_c for p in series[-window:]]
+    recent = [p.wrist_temp_c for p in series[:-1][-window:]]
     if not recent:
         return 0.0
     return round(float(np.mean(recent)), 3)

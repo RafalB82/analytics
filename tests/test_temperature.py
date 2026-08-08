@@ -34,10 +34,16 @@ class TestComputeTempBaseline:
     def test_returns_zero_when_empty(self):
         assert compute_temp_baseline([]) == 0.0
 
-    def test_respects_window(self):
-        # window=3 -> bierze ostatnie 3 z 5
+    def test_respects_window_excludes_current_day(self):
+        # window=3, ostatni element = dzień bieżący (NIE wchodzi do baseline),
+        # spójnie z baseline.compute_ewma_baseline: bierze 3 z 4 poprzednich.
         series = _temps([35.0, 35.0, 36.0, 37.0, 38.0])
-        assert compute_temp_baseline(series, window=3) == round((37 + 38 + 36) / 3, 3)
+        assert compute_temp_baseline(series, window=3) == round((35 + 36 + 37) / 3, 3)
+
+    def test_baseline_non_contaminated_by_current_spike(self):
+        # dzisiejszy spike nie podnosi baseline (nie "goni" za samym sobą)
+        series = _temps([36.0] * 13 + [36.5])
+        assert compute_temp_baseline(series, window=14) == 36.0
 
 
 class TestTempDeviationAlert:

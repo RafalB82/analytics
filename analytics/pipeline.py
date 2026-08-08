@@ -23,15 +23,12 @@ from . import confidence as conf_mod
 from . import explain as explain_mod
 from . import nutrition_adaptive as nutr_mod
 from . import stability as stab_mod
+from . import temperature as temp_mod
 from .config import settings
 from .fetch_apple import build_apple_models
 from .fetch_mfp import to_weight_series
 from .readiness_integration import compute_full_readiness
-from .run_analysis import (
-    _build_temp_status,
-    _compute_goal,
-    _temp_output,
-)
+from .run_analysis import _build_temp_status
 from .validators import validate_input
 
 
@@ -111,7 +108,7 @@ def analytics_stage(ctx: PipelineContext) -> PipelineContext:
         temp_alert=ctx.temp_alert,
         spo2_confirmed=False,
     )
-    ctx.goal_info = _compute_goal(m["energy_series"], m["weight_info"], ctx.params)
+    ctx.goal_info = nutr_mod.build_goal_output(m["energy_series"], m["weight_info"], ctx.params)
     ctx.trend_hrv = baseline_mod.compute_trend_slope(m["hrv_series"])
     ctx.trend_rhr = baseline_mod.compute_trend_slope(m["rhr_series"])
     return ctx
@@ -200,7 +197,7 @@ def explain_stage(ctx: PipelineContext) -> PipelineContext:
         trend_note=trend_note,
         acwr=asdict(ctx.acwr_info["result"]),
         rpe_coverage=rpe_cov,
-        temperature=_temp_output(ctx.temp_alert, m["temp_series"], ctx.target),
+        temperature=temp_mod.serialize_temp_output(ctx.temp_alert, m["temp_series"], ctx.target),
         goal=ctx.goal_info,
     )
     return ctx
@@ -228,7 +225,7 @@ def serialization_stage(ctx: PipelineContext) -> PipelineContext:
                 for d in ctx.acwr_info["daily_loads"][-14:]
             ],
         },
-        temperature=_temp_output(ctx.temp_alert, m["temp_series"], ctx.target),
+        temperature=temp_mod.serialize_temp_output(ctx.temp_alert, m["temp_series"], ctx.target),
         nutrition=ctx.goal_info,
         baseline_trends={
             "hrv": (asdict(ctx.trend_hrv) if ctx.trend_hrv else None),

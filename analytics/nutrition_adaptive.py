@@ -174,6 +174,66 @@ def compute_long_window_tdee(
         return None
 
 
+def build_goal_output(energy_series, weight_info: dict, params: dict) -> dict:
+    """Cel kaloryczny z aktywności Apple (TDEE + marża wg celu).
+
+    TDEE = średnie basal + active z okna (7d, docelowo 28d) — z Apple Health.
+    MFP nie uczestniczy: dostarcza tylko zjedzone kalorie/jedzenie.
+    Waga (punkt kontrolny z Apple, opcjonalna) służy do białka + kontekstu.
+    """
+    goal = str(params.get("phase", "utrzymanie"))  # 'phase' = aktualny cel
+    bodyweight = None
+    if weight_info.get("present"):
+        bodyweight = weight_info.get("weight_kg")
+
+    try:
+        est = compute_tdee(
+            energy_series=energy_series,
+            goal=goal,
+            bodyweight_kg=bodyweight,
+        )
+    except ValueError as e:
+        logger.warning("TDEE: %s", e)
+        return {"status": "skipped", "reason": str(e)}
+
+    # dłuższe okno (28d) jako porównanie do aktywnego (7d)
+    long_est = compute_long_window_tdee(
+        energy_series, goal=goal, bodyweight_kg=bodyweight,
+    )
+    long_info = None
+    if long_est is not None:
+        long_info = {
+            "tdee_kcal": long_est.tdee_kcal,
+            "target_kcal": long_est.target_kcal,
+            "window_days": long_est.window_days,
+            "n_days": long_est.n_days,
+        }
+
+    logger.info("CEL: %s -> target=%.0f kcal (TDEE 7d), long28: %s",
+                goal, est.target_kcal, long_info["tdee_kcal"] if long_info else None)
+
+    return {
+        "status": "ok",
+        "goal": goal,
+        "tdee_kcal": est.tdee_kcal,
+        "basal_kcal": est.basal_kcal,
+        "active_kcal": est.active_kcal,
+        "window_days": est.window_days,
+        "n_days": est.n_days,
+        "margin_pct": est.margin_pct,
+        "target_kcal": est.target_kcal,
+        "protein_g": est.protein_g,
+        "activity": {
+            "avg_exercise_min": est.avg_exercise_min,
+            "avg_stand_min": est.avg_stand_min,
+            "avg_physical_effort": est.avg_physical_effort,
+            "training_days_ratio": est.training_days_ratio,
+        },
+        "long_window_28d": long_info,
+        "weight": weight_info if weight_info.get("present") else {"present": False},
+    }
+
+
 @dataclass(frozen=True)
 class WeightTrend:
     """Wynik analizy trendu wagi (faza 4.0): slope + rolling median + kontekst."""

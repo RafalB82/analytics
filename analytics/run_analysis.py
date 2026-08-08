@@ -41,14 +41,12 @@ from __future__ import annotations
 
 import json
 import sys
-from dataclasses import asdict
 from datetime import date
 from typing import Any, cast
 
 from pydantic import ValidationError
 
 from . import baseline as baseline_mod
-from . import nutrition_adaptive as nutr_mod
 from . import temperature as temp_mod
 from .config import settings
 from .exceptions import InsufficientDataError, InvalidMetricError
@@ -110,87 +108,6 @@ def _build_temp_status(temp_series, hrv_series, target: date) -> temp_mod.TempAl
     msg = temp_mod.build_temp_override_message(alert, spo2_confirmed=False)
     logger.debug("temp override: %s", msg if msg else "brak")
     return alert
-
-
-def _compute_goal(energy_series, weight_info: dict, params: dict) -> dict:
-    """Cel kaloryczny z aktywności Apple (TDEE + marża wg celu).
-
-    TDEE = średnie basal + active z okna (7d, docelowo 28d) — z Apple Health.
-    MFP nie uczestniczy: dostarcza tylko zjedzone kalorie/jedzenie.
-    Waga (punkt kontrolny z Apple, opcjonalna) służy do białka + kontekstu.
-    """
-    goal = str(params.get("phase", "utrzymanie"))  # 'phase' = aktualny cel
-    bodyweight = None
-    if weight_info.get("present"):
-        bodyweight = weight_info.get("weight_kg")
-
-    try:
-        est = nutr_mod.compute_tdee(
-            energy_series=energy_series,
-            goal=goal,
-            bodyweight_kg=bodyweight,
-        )
-    except ValueError as e:
-        logger.warning("TDEE: %s", e)
-        return {"status": "skipped", "reason": str(e)}
-
-    # dłuższe okno (28d) jako porównanie do aktywnego (7d)
-    long_est = nutr_mod.compute_long_window_tdee(
-        energy_series, goal=goal, bodyweight_kg=bodyweight,
-    )
-    long_info = None
-    if long_est is not None:
-        long_info = {
-            "tdee_kcal": long_est.tdee_kcal,
-            "target_kcal": long_est.target_kcal,
-            "window_days": long_est.window_days,
-            "n_days": long_est.n_days,
-        }
-
-    logger.info("CEL: %s -> target=%.0f kcal (TDEE 7d), long28: %s",
-                goal, est.target_kcal, long_info["tdee_kcal"] if long_info else None)
-
-    return {
-        "status": "ok",
-        "goal": goal,
-        "tdee_kcal": est.tdee_kcal,
-        "basal_kcal": est.basal_kcal,
-        "active_kcal": est.active_kcal,
-        "window_days": est.window_days,
-        "n_days": est.n_days,
-        "margin_pct": est.margin_pct,
-        "target_kcal": est.target_kcal,
-        "protein_g": est.protein_g,
-        "activity": {
-            "avg_exercise_min": est.avg_exercise_min,
-            "avg_stand_min": est.avg_stand_min,
-            "avg_physical_effort": est.avg_physical_effort,
-            "training_days_ratio": est.training_days_ratio,
-        },
-        "long_window_28d": long_info,
-        "weight": weight_info if weight_info.get("present") else {"present": False},
-    }
-
-
-# --- Faza 5: serialize_output ------------------------------------------------
-
-
-def _temp_output(alert: temp_mod.TempAlert, temp_series, target: date) -> dict:
-    """Serializuje alert temperatury do dictu outputu (bez obiektu wewnątrz)."""
-    if not temp_series:
-        return {"status": "no_data", "alert": None, "override_message": None}
-
-    bl = temp_mod.compute_temp_baseline(temp_series)
-    current_points = [p for p in temp_series if p.day == target]
-    current = current_points[0].wrist_temp_c if current_points else temp_series[-1].wrist_temp_c
-    return {
-        "status": "ok",
-        "baseline_c": bl,
-        "current_c": current,
-        "deviation_c": round(current - bl, 3),
-        "alert": asdict(alert),
-        "override_message": temp_mod.build_temp_override_message(alert, spo2_confirmed=False),
-    }
 
 
 def run(payload: dict) -> dict[str, Any]:

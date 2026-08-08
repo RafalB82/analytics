@@ -12,7 +12,7 @@ Zależności: numpy
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import date
 
 import numpy as np
@@ -131,3 +131,21 @@ def build_temp_override_message(alert: TempAlert, spo2_confirmed: bool) -> str |
         f"Podwyższona temperatura nadgarstka (+{alert.deviation_c}°C). "
         f"Obserwuj, bez automatycznej zmiany strefy."
     )
+
+
+def serialize_temp_output(alert, temp_series, target: date) -> dict:
+    """Serializuje alert temperatury do dictu outputu (bez obiektu wewnątrz)."""
+    if not temp_series:
+        return {"status": "no_data", "alert": None, "override_message": None}
+
+    bl = compute_temp_baseline(temp_series)
+    current_points = [p for p in temp_series if p.day == target]
+    current = current_points[0].wrist_temp_c if current_points else temp_series[-1].wrist_temp_c
+    return {
+        "status": "ok",
+        "baseline_c": bl,
+        "current_c": current,
+        "deviation_c": round(current - bl, 3),
+        "alert": asdict(alert),
+        "override_message": build_temp_override_message(alert, spo2_confirmed=False),
+    }

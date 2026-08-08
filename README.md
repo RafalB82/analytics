@@ -13,17 +13,18 @@ scoring gotowości (strefa + zalecenia RPE/objętość). Obliczenia są w 100%
 deterministyczne; każdy moduł ma jedną odpowiedzialność.
 
 ```
-Apple (HRV/RHR/sen) ─┐
-Hevy (tonaż+RPE) ─────┤→ run_analysis → JSON → LLM (interpretacja)
-MFP (waga, opt.) ────┘
+Apple (HRV/RHR/sen + aktywność + waga) ─┐
+Hevy (tonaż+RPE) ────────────────────────┤→ run_analysis → JSON → LLM (interpretacja)
+MFP (zjedzone kalorie/jedzenie) ─────────┘
 ```
 
 | Sygnał | Źródło | Co liczy |
 |---|---|---|
 | HRV, RHR, sen | Apple MCP | rolowany baseline (EWMA), trend, scoring |
 | Tonaż + RPE | Hevy MCP | ACWR (acute:chronic workload ratio) |
-| Waga (opcjonalnie) | MFP MCP | korekta TDEE z trendu wagi |
-| Temperatura nadgarstka (opcjonalnie) | Apple MCP | twardy override strefy |
+| Aktywność + waga | Apple MCP | **cel kaloryczny** (TDEE z aktywności + marża wg celu) |
+| Zjedzone kalorie | MFP MCP | rejestracja jedzenia (nie bierze udziału w TDEE) |
+| Temperatura nadgarstka | Apple MCP | twardy override strefy |
 
 ## Struktura
 
@@ -33,7 +34,7 @@ MFP (waga, opt.) ────┘
 - `baseline.py` — baseline EWMA + trend + detekcja przesunięcia normy
 - `acwr.py` — Acute:Chronic Workload Ratio (Gabbett 2016)
 - `temperature.py` — alert temperatury nadgarstka (twardy override)
-- `nutrition_adaptive.py` — korekta TDEE + białko wg fazy
+- `nutrition_adaptive.py` — cel kaloryczny (TDEE z aktywności + marża wg celu) + białko
 - `readiness_integration.py` — finalny scoring + strefa
 - `fetch_*.py` — konwersja danych z MCP na serie analityczne
 - `run_analysis.py` — orchestrator (wejście JSON → wyjście JSON)
@@ -56,22 +57,45 @@ python -m analytics.run_analysis '<json>'  # ręczny orchestrator
   "target_date": "2026-08-07",
   "apple_daily": [
     {"date": "2026-08-07", "resting_heart_rate": 53.0,
-     "heart_rate_variability": 44.33, "sleep": {"total_hours": 6.43}}
+     "heart_rate_variability": 44.33, "sleep": {"total_hours": 6.43},
+     "basal_energy_burned": 7200.0, "active_energy": 4200.0,  // kJ (TDEE)
+     "weight_body_mass": 71.05, "body_fat_percentage": 15.1}  // punkty kontrolne
   ],
   "apple_temp": [ {"date": "2026-08-06", "value": 35.98} ],
   "hevy_workouts": [ /* z hevy__get-workouts, strony sklejone */ ],
-  "mfp_weight": [ {"date": "2026-08-01", "value": 69.9} ],
+  "apple_workouts": [ /* z apple__list_recent_workouts — cardio z Apple Watch,
+     liczone TRIMP w OSOBNYM ACWR; siłowe z Apple są ignorowane (siła = Hevy) */
+    {"name": "Outdoor Cycling", "start": "2026-08-06T17:37:17",
+     "duration_min": 88.2, "avg_heart_rate_bpm": 143.5}
+  ],
+  "cardio_sessions": [ /* legacy, ręczne {"startTime","duration_minutes","rpe"} */
+    {"startTime": "2026-08-05T08:00:00", "duration_minutes": 90, "rpe": 6}
+  ],
   "params": {
-    "tdee_current": 2260, "phase": "utrzymanie",
-    "bodyweight_kg": 69.9, "target_trend_kg_per_week": 0.0
+    "phase": "utrzymanie",
+    "bodyweight_kg": 71.0
   }
 }
 ```
 
+> `apple_workouts`: sesje wydolnościowe z Apple Watch (cycling/rowing/walking/running/swimming).
+> Liczone jako TRIMP z tętna (automatycznie, bez ręcznego RPE) w **osobnym ACWR cardio**, bo
+> skala TRIMP (setki) różni się od tonażu z Hevy (tysiące). Siłowe/kalisteniczne z Apple są
+> odrzucane — siła pochodzi wyłącznie z Hevy (zero dubli). Oba ACWR łączone na poziomie
+> gotowości zestawem `acwr_combined_modifier` (maksimum stref).
+>
+> TRIMP: `hr_max` brane z danej sesji (`max_heart_rate_bpm`), gdy dostępne — pełniejszy obraz
+> pułapu osiągniętego w tej aktywności; `hr_rest` zawsze z configu (poranne spoczynkowe).
+> Klasyfikacja cardio ma czarną listę siłowych słów kluczowych z pierwszeństwem, więc custom
+> nazwa typu "Walking Lunges" nie zostanie błędnie uznana za cardio.
+
+> `phase` = aktualny cel: `utrzymanie` (marża 0) / `redukcja` (−15%) / `masa` (+10%).
+> `bodyweight_kg` opcjonalny (gdy brak punktu wagi z Apple w danym dniu).
+
 ### Wyjście JSON
 
 Sekcje: `readiness` (strefa/RPE/objętość), `acwr` (acute/chronic/ratio/zone),
-`acwr_detail.rpe_coverage`, `temperature`, `tdee_adaptive`,
+`acwr_detail.rpe_coverage`, `temperature`, `nutrition` (cel kaloryczny z aktywności),
 `baseline_trends` (HRV/RHR trend + R²), `inputs` (ile punktów użyto).
 
 ## Ważne zachowania
@@ -86,7 +110,11 @@ Sekcje: `readiness` (strefa/RPE/objętość), `acwr` (acute/chronic/ratio/zone),
   z poprzedniej nocy; alert ≥0.3°C od baseline, severity „znacząca" → twardy
   override na strefę czerwoną.
 - `run_analysis` wymaga min. 6 punktów HRV do baseline (EWMA).
-- Waga z MFP jest opcjonalna; bez niej korekta TDEE jest pomijana (`skipped`).
+- **Cel kaloryczny z aktywności** (nie z MFP): TDEE = średnie basal+active z okna
+  (7d, docelowo 28d) z Apple; cel = TDEE + marża % wg `phase`. MFP rejestruje
+  jedzenie, ale nie wyznacza celu.
+- **Waga** to punkt kontrolny z Apple (w dni ważenia), nie trend — służy do
+  białka i kontekstu; bez niej cel kaloryczny i tak działa (z samej aktywności).
 
 ## Jakość / CI
 

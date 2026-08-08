@@ -13,7 +13,7 @@ from datetime import date
 
 import numpy as np
 
-from .config.settings import BASELINE as _CFG
+from .config import settings
 from .logging import get_logger
 
 logger = get_logger(__name__)
@@ -44,8 +44,8 @@ class TrendResult:
 
 def compute_ewma_baseline(
     series: list[MetricPoint],
-    alpha: float = _CFG.ewma_alpha,
-    min_points: int = _CFG.min_points,
+    alpha: float | None = None,
+    min_points: int | None = None,
 ) -> BaselineResult | None:
     """
     Wykładniczo ważona średnia krocząca jako baseline.
@@ -55,6 +55,10 @@ def compute_ewma_baseline(
     series musi być posortowane chronologicznie rosnąco, ostatni element
     = dzień, dla którego liczysz odchylenie (nie wchodzi do baseline).
     """
+    if alpha is None:
+        alpha = settings.BASELINE.ewma_alpha
+    if min_points is None:
+        min_points = settings.BASELINE.min_points
     if len(series) < min_points + 1:
         logger.debug("za mało punktów do baseline: %d (min %d)", len(series), min_points + 1)
         return None
@@ -83,8 +87,8 @@ def compute_ewma_baseline(
 def baseline_by_context(
     series: list[MetricPoint],
     current_is_training_day: bool,
-    alpha: float = _CFG.ewma_alpha,
-    min_points: int = _CFG.min_points_context,
+    alpha: float | None = None,
+    min_points: int | None = None,
 ) -> BaselineResult | None:
     """
     Osobny baseline dla dni treningowych i nietreningowych.
@@ -92,6 +96,8 @@ def baseline_by_context(
     poprzedzał trening czy odpoczynek — mieszanie ich w jednym baseline
     zaszumia sygnał.
     """
+    if min_points is None:
+        min_points = settings.BASELINE.min_points_context
     filtered = [p for p in series[:-1] if p.is_training_day == current_is_training_day]
     filtered.append(series[-1])
     return compute_ewma_baseline(filtered, alpha=alpha, min_points=min_points)
@@ -99,9 +105,9 @@ def baseline_by_context(
 
 def compute_trend_slope(
     series: list[MetricPoint],
-    window_days: int = _CFG.trend_window_days,
-    smoothing_window: int = _CFG.trend_smoothing,
-    min_r_squared: float = _CFG.trend_min_r_squared,
+    window_days: int | None = None,
+    smoothing_window: int | None = None,
+    min_r_squared: float | None = None,
 ) -> TrendResult | None:
     """
     Regresja liniowa na oknie window_days (domyślnie ostatnie 7 dni),
@@ -113,6 +119,12 @@ def compute_trend_slope(
     trend niepewny) — w takim wypadku traktuj jako "stabilny" / brak
     sygnału, nie ufaj kierunkowi.
     """
+    if window_days is None:
+        window_days = settings.BASELINE.trend_window_days
+    if smoothing_window is None:
+        smoothing_window = settings.BASELINE.trend_smoothing
+    if min_r_squared is None:
+        min_r_squared = settings.BASELINE.trend_min_r_squared
     recent = series[-window_days:]
     if len(recent) < max(4, smoothing_window + 2):
         return None
@@ -154,9 +166,9 @@ def compute_trend_slope(
 def detect_baseline_shift(
     short_series: list[MetricPoint],
     long_series: list[MetricPoint],
-    threshold_pct: float = _CFG.shift_threshold_pct,
-    alpha_short: float = _CFG.shift_alpha_short,
-    alpha_long: float = _CFG.shift_alpha_long,
+    threshold_pct: float | None = None,
+    alpha_short: float | None = None,
+    alpha_long: float | None = None,
 ) -> bool:
     """
     Porównanie EWMA(krótkie, ~7d) vs EWMA(długie, ~28d).
@@ -165,6 +177,12 @@ def detect_baseline_shift(
     dobowe odchylenie. Użyj tego jako flagę do ręcznego review configu
     baseline, nie jako automatyczną korektę bez nadzoru.
     """
+    if threshold_pct is None:
+        threshold_pct = settings.BASELINE.shift_threshold_pct
+    if alpha_short is None:
+        alpha_short = settings.BASELINE.shift_alpha_short
+    if alpha_long is None:
+        alpha_long = settings.BASELINE.shift_alpha_long
     short_bl = compute_ewma_baseline(short_series, alpha=alpha_short, min_points=4)
     long_bl = compute_ewma_baseline(long_series, alpha=alpha_long, min_points=10)
 

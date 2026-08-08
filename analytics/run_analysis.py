@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """
-run_analysis.py — RĘCZNY orchestrator rozszerzonej analizy gotowości.
+run_analysis.py — cienki CLI (thin CLI) dla analizy gotowości.
 
-Łączy moduły (baseline / acwr / temperature / nutrition_adaptive /
-readiness_integration) w jedną, deterministyczną analizę.
+Cała logika analityczna żyje w modułach dziedzinowych (analytics/acwr.py,
+fetch_apple.py, temperature.py, nutrition_adaptive.py, readiness_integration.py)
+i jest orkiestrowana przez AnalyticsPipeline (analytics/pipeline.py). Ten plik
+zawiera wyłącznie: parse_input, run() (delegacja do PIPELINE), main(), _json_safe,
+logowanie i obsługę błędów.
 
 ŹRÓDŁA DANYCH (TYLKO Apple + Hevy + MFP):
     - Apple MCP  -> HRV, RHR, sen          (apple__get_daily_activity_range)
@@ -31,42 +34,25 @@ INPUT JSON:
 
 OUTPUT: JSON z sekcjami readiness / acwr / temperature / tdee / baseline_trends.
 
-Struktura (każda funkcja ma jedno zadanie):
-    parse_input -> validate_input -> build_apple_models -> calculate_metrics
-                -> serialize_output -> (save_report)
-Błędy: `InsufficientDataError` -> fallback (nie fatal); `InvalidMetricError`
--> błąd danych (propagowany). Logi strukturalne przez analytics.logging.
+Struktura (thin CLI):
+    main() -> parse_input -> run() -> PIPELINE.run() (analytics/pipeline.py)
+Orkiestrację (InputValidation -> ModelBuilding -> Analytics -> Confidence ->
+Serialization) realizuje AnalyticsPipeline. Błędy: `InsufficientDataError` ->
+fallback (nie fatal); `InvalidMetricError` -> błąd danych (propagowany). Logi
+strukturalne przez analytics.logging.
 """
 from __future__ import annotations
 
 import json
 import sys
-from dataclasses import asdict
-from datetime import date, timedelta
 from typing import Any, cast
 
 from pydantic import ValidationError
 
-from . import acwr as acwr_mod
-from . import baseline as baseline_mod
-from . import nutrition_adaptive as nutr_mod
-from . import temperature as temp_mod
-from .config.settings import ACWR as ACWR_CFG
 from .exceptions import InsufficientDataError, InvalidMetricError
-from .fetch_apple import build_apple_input
-from .fetch_hevy import build_daily_load_series, rpe_coverage
-from .fetch_mfp import to_weight_series
 from .logging import get_logger
-from .readiness_integration import compute_full_readiness
 
 logger = get_logger("run_analysis")
-
-ALLOWED_SOURCES = {"apple+hevy+mfp"}
-
-# Minimalna liczba punktów HRV do analizy (baseline + trend)
-MIN_HRV_POINTS = 6
-# Okno wstecz (dni) dla ACWR chronic (28d) + margines
-ACWR_LOOKBACK_DAYS = 35
 
 
 def _json_safe(o: Any) -> Any:
@@ -83,9 +69,6 @@ def _json_safe(o: Any) -> Any:
     return o
 
 
-# --- Faza 1: parse_input -----------------------------------------------------
-
-
 def parse_input(raw: str) -> dict:
     """Parsuje wejściowy JSON do dict. Rzuca InvalidMetricError na zły JSON."""
     try:
@@ -97,206 +80,36 @@ def parse_input(raw: str) -> dict:
     return payload
 
 
-# --- Faza 2: validate_input --------------------------------------------------
-
-
-def validate_input(payload: dict) -> tuple[str, date, dict, list, list, list, list]:
-    """Weryfikuje źródło i obecność danych. Zwraca uporządkowane składowe."""
-    source = payload.get("source")
-    if source not in ALLOWED_SOURCES:
-        raise InvalidMetricError(
-            "source", source, f"oczekiwano '{'apple+hevy+mfp'}', otrzymano '{source}'"
-        )
-
-    apple_daily = payload.get("apple_daily", [])
-    if not apple_daily:
-        raise InsufficientDataError("missing_apple_daily: brak danych z Apple")
-
-    target = _parse_target(payload.get("target_date"))
-    params = payload.get("params", {})
-    hevy_workouts = payload.get("hevy_workouts", [])
-    mfp_weight = payload.get("mfp_weight") or []
-    apple_temp = payload.get("apple_temp") or []
-
-    return source, target, params, apple_daily, hevy_workouts, mfp_weight, apple_temp
-
-
-def _parse_target(s: str | None) -> date:
-    if not s:
-        return date.today()
-    try:
-        return date.fromisoformat(str(s)[:10])
-    except ValueError as e:
-        raise InvalidMetricError("target_date", s, f"niepoprawna data: {e}") from e
-
-
-# --- Faza 3: build_models (dane -> serie analityczne) ------------------------
-
-
-def build_apple_models(apple_daily: list, target: date, apple_temp: list) -> dict:
-    """Konwertuje surowe dict z Apple na serie MetricPoint / sleep / temp."""
-    apple_in = build_apple_input(apple_daily, target, temp_points=apple_temp)
-
-    hrv_series = apple_in["hrv_series"]
-    if not hrv_series or len(hrv_series) < MIN_HRV_POINTS:
-        raise InsufficientDataError(
-            f"insufficient_hrv_history: {len(hrv_series)} punktów (min. {MIN_HRV_POINTS})"
-        )
-
-    logger.info("Apple: %d HRV, %d RHR, sen=%s, temp=%d",
-                len(hrv_series), len(apple_in["rhr_series"]),
-                apple_in["sleep_hours_today"], len(apple_in["temp_series"]))
-    return apple_in
-
-
-def build_acwr(hevy_workouts: list, target: date) -> dict:
-    """Oblicza ACWR z treningów Hevy (acute/chronic/ratio + pokrycie RPE)."""
-    start = target - timedelta(days=ACWR_LOOKBACK_DAYS)
-    daily_loads = build_daily_load_series(hevy_workouts, start, target)
-    acute = acwr_mod.compute_acute_load(daily_loads, window=ACWR_CFG.acute_window)
-    chronic = acwr_mod.compute_chronic_load(daily_loads, window=ACWR_CFG.chronic_window,
-                                            use_ewma=ACWR_CFG.chronic_use_ewma)
-    acwr_res = acwr_mod.acwr_ratio(acute, chronic)
-    rpe_cov = rpe_coverage(hevy_workouts)
-    logger.info("ACWR: ratio=%.2f (%s), pokrycie RPE=%.1f%%",
-                acwr_res.ratio, acwr_res.zone, rpe_cov["coverage_pct"])
-    return {
-        "result": acwr_res,
-        "acute": acute,
-        "chronic": chronic,
-        "rpe_coverage": rpe_cov,
-        "daily_loads": daily_loads,
-    }
-
-
-# --- Faza 4: analyse (logika analityczna) ------------------------------------
-
-
-def _build_temp_status(temp_series, hrv_series, target: date) -> temp_mod.TempAlert:
-    """Buduje obiekt TempAlert z serii temperatury i HRV (override dla readiness)."""
-    if not temp_series:
-        return temp_mod.TempAlert(
-            triggered=False, deviation_c=0.0, baseline_c=0.0, severity="brak",
-            combined_with_hrv_drop=False,
-        )
-
-    bl = temp_mod.compute_temp_baseline(temp_series)
-    current_points = [p for p in temp_series if p.day == target]
-    current = current_points[0].wrist_temp_c if current_points else temp_series[-1].wrist_temp_c
-
-    hrv_dropped = False
-    if hrv_series:
-        bl_hrv = baseline_mod.compute_ewma_baseline(hrv_series)
-        if bl_hrv and bl_hrv.deviation_pct <= -10:
-            hrv_dropped = True
-
-    alert = temp_mod.temp_deviation_alert(current=current, baseline=bl, hrv_dropped=hrv_dropped)
-    msg = temp_mod.build_temp_override_message(alert, spo2_confirmed=False)
-    logger.debug("temp override: %s", msg if msg else "brak")
-    return alert
-
-
-def _compute_tdee(mfp_weight: list, params: dict) -> dict:
-    """Adaptacyjna korekta TDEE z trendu wagi MFP (opcjonalne)."""
-    if not mfp_weight:
-        logger.info("TDEE: brak danych o wadze z MFP — korekta pominięta")
-        return {"status": "skipped", "note": "brak danych o wadze z MFP — korekta TDEE pominięta"}
-
-    weight_series = to_weight_series(mfp_weight)
-    trend = nutr_mod.compute_weight_trend(weight_series)
-    adj = nutr_mod.adjust_tdee(
-        current_tdee=float(params.get("tdee_current", 2260)),
-        weight_trend_kg_per_day=trend,
-        target_trend_kg_per_week=float(params.get("target_trend_kg_per_week", 0.0)),
-    )
-    info = asdict(adj)
-    info["status"] = "ok"
-    logger.info("TDEE: korekta %d kcal (confidence=%s)", adj.adjustment_kcal, adj.confidence)
-    return info
-
-
-# --- Faza 5: serialize_output ------------------------------------------------
-
-
-def _temp_output(alert: temp_mod.TempAlert, temp_series, target: date) -> dict:
-    """Serializuje alert temperatury do dictu outputu (bez obiektu wewnątrz)."""
-    if not temp_series:
-        return {"status": "no_data", "alert": None, "override_message": None}
-
-    bl = temp_mod.compute_temp_baseline(temp_series)
-    current_points = [p for p in temp_series if p.day == target]
-    current = current_points[0].wrist_temp_c if current_points else temp_series[-1].wrist_temp_c
-    return {
-        "status": "ok",
-        "baseline_c": bl,
-        "current_c": current,
-        "deviation_c": round(current - bl, 3),
-        "alert": asdict(alert),
-        "override_message": temp_mod.build_temp_override_message(alert, spo2_confirmed=False),
-    }
-
-
 def run(payload: dict) -> dict[str, Any]:
     """Główny punkt wejścia analizy. Przyjmuje dict (już sparsowany JSON).
+
+    Deleguję do AnalyticsPipeline (analytics/pipeline.py) — 5 stage'ów:
+    InputValidation -> ModelBuilding -> Analytics -> Confidence -> Serialization.
 
     - `InsufficientDataError`  -> status fallback (brak danych, nie fatal)
     - `InvalidMetricError`     -> status error (problem z danymi/konfiguracją)
     """
+    from .pipeline import PIPELINE, PipelineContext
+
     try:
-        source, target, params, apple_daily, hevy_workouts, mfp_weight, apple_temp = \
-            validate_input(payload)
-        models = build_apple_models(apple_daily, target, apple_temp)
-        acwr_info = build_acwr(hevy_workouts, target)
-        temp_alert = _build_temp_status(models["temp_series"], models["hrv_series"], target)
-
-        readiness = compute_full_readiness(
-            hrv_series=models["hrv_series"],
-            rhr_series=models["rhr_series"],
-            sleep_hours_today=models["sleep_hours_today"],
-            acwr_result=acwr_info["result"],
-            temp_alert=temp_alert,
-            spo2_confirmed=False,
-        )
-        tdee_info = _compute_tdee(mfp_weight, params)
-
-        trend_hrv = baseline_mod.compute_trend_slope(models["hrv_series"])
-        trend_rhr = baseline_mod.compute_trend_slope(models["rhr_series"])
-
-        result = {
-            "status": "ok",
-            "source": source,
-            "target_date": target.isoformat(),
-            "readiness": asdict(readiness),
-            "acwr": asdict(acwr_info["result"]),
-            "acwr_detail": {
-                "acute_7d": acwr_info["acute"],
-                "chronic_28d_ewma": acwr_info["chronic"],
-                "rpe_coverage": acwr_info["rpe_coverage"],
-                "daily_loads_last14": [
-                    {"day": str(d.day), "load": d.load}
-                    for d in acwr_info["daily_loads"][-14:]
-                ],
-            },
-            "temperature": _temp_output(temp_alert, models["temp_series"], target),
-            "tdee_adaptive": tdee_info,
-            "baseline_trends": {
-                "hrv": (asdict(trend_hrv) if trend_hrv else None),
-                "rhr": (asdict(trend_rhr) if trend_rhr else None),
-            },
-            "inputs": {
-                "apple_points": {
-                    "hrv": len(models["hrv_series"]),
-                    "rhr": len(models["rhr_series"]),
-                    "sleep_today_h": models["sleep_hours_today"],
-                    "temp": len(models["temp_series"]),
-                },
-                "sleep_data": ("ok" if models["sleep_hours_today"] is not None else "missing"),
-                "hevy_workouts_count": len(hevy_workouts),
-                "mfp_weight_points": len(mfp_weight),
-            },
-        }
+        ctx = PIPELINE.run(PipelineContext(
+            source=payload.get("source", ""),
+            target=payload.get("target_date"),
+            params=payload.get("params", {}),
+            apple_daily=payload.get("apple_daily", []),
+            hevy_workouts=payload.get("hevy_workouts", []),
+            apple_workouts=payload.get("apple_workouts", []),
+            cardio_sessions=payload.get("cardio_sessions", []),
+            mfp_weight=payload.get("mfp_weight") or [],
+            apple_temp=payload.get("apple_temp", []),
+        ))
+        target = ctx.target
+        readiness = ctx.readiness
+        # Serializacja przez Pydantic (model_dump mode=json) + _json_safe na wszelki
+        # wypadek gdyby zagnieżdżone wartości numpy przeszły przez dict-y (np. ACWR).
+        out = cast(dict[str, Any], _json_safe(ctx.report.model_dump(mode="json")))
         logger.info("analiza OK dla %s (strefa %s)", target, readiness.zone)
-        return cast(dict[str, Any], _json_safe(result))
+        return out
 
     except InsufficientDataError as e:
         logger.warning("fallback: %s", e)

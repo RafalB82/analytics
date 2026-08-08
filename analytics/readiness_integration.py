@@ -11,9 +11,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .acwr import ACWRResult, acwr_readiness_modifier
+from .acwr import ACWRResult, acwr_combined_modifier
 from .baseline import MetricPoint, compute_ewma_baseline, compute_trend_slope
-from .config.settings import READINESS as _CFG
+from .config import settings
 from .exceptions import MissingBaselineError
 from .logging import get_logger
 from .temperature import TempAlert, build_temp_override_message
@@ -50,29 +50,29 @@ def score_hrv_rhr_sleep(
     """
     score = 0
 
-    if hrv_deviation_pct <= _CFG.hrv_penalty_high:
+    if hrv_deviation_pct <= settings.READINESS.hrv_penalty_high:
         score += 2
-    elif hrv_deviation_pct <= _CFG.hrv_penalty_low:
+    elif hrv_deviation_pct <= settings.READINESS.hrv_penalty_low:
         score += 1
 
-    if rhr_deviation_bpm >= _CFG.rhr_penalty_high:
+    if rhr_deviation_bpm >= settings.READINESS.rhr_penalty_high:
         score += 2
-    elif rhr_deviation_bpm >= _CFG.rhr_penalty_low:
+    elif rhr_deviation_bpm >= settings.READINESS.rhr_penalty_low:
         score += 1
 
     if sleep_hours is not None:
-        if sleep_hours < _CFG.sleep_penalty_high_h:
+        if sleep_hours < settings.READINESS.sleep_penalty_high_h:
             score += 2
-        elif sleep_hours < _CFG.sleep_penalty_low_h:
+        elif sleep_hours < settings.READINESS.sleep_penalty_low_h:
             score += 1
 
     return score
 
 
 def classify_zone(total_score: int) -> tuple[str, str, str]:
-    if total_score <= _CFG.zone_green_max:
+    if total_score <= settings.READINESS.zone_green_max:
         return "zielona", "RPE 9 ostatnia seria / 8 reszta", "pełna objętość"
-    if total_score <= _CFG.zone_yellow_max:
+    if total_score <= settings.READINESS.zone_yellow_max:
         return "żółta", "max RPE 8 wszędzie", "bez zmian objętości"
     return "czerwona", "max RPE 7 lub regeneracja", "objętość -30-40%"
 
@@ -80,10 +80,11 @@ def classify_zone(total_score: int) -> tuple[str, str, str]:
 def compute_full_readiness(
     hrv_series: list[MetricPoint],
     rhr_series: list[MetricPoint],
-    sleep_hours_today: float,
+    sleep_hours_today: float | None,
     acwr_result: ACWRResult,
     temp_alert: TempAlert,
     spo2_confirmed: bool,
+    cardio_acwr: ACWRResult | None = None,
 ) -> ReadinessOutput:
 
     hrv_baseline = compute_ewma_baseline(hrv_series)
@@ -101,7 +102,7 @@ def compute_full_readiness(
         sleep_hours=sleep_hours_today,
     )
 
-    acwr_penalty = acwr_readiness_modifier(acwr_result)
+    acwr_penalty = acwr_combined_modifier(acwr_result, cardio_acwr)
     total = base + acwr_penalty
 
     zone, max_rpe, volume_note = classify_zone(total)

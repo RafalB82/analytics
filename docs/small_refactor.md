@@ -3,6 +3,13 @@
 **Status:** propozycja — wrócimy do wdrożenia później (2026-08-07).
 **Dotyczy:** pakiet `analytics` (moduł `nutrition_adaptive.py` + `run_analysis.py`).
 
+> **Notka (2026-08-08) — faza 10.0 gotowa:** niezależnie od tej propozycji wdrożono
+> odwrócenie zależności `run_analysis → pipeline` (thin CLI, `run_analysis.py` ~144 linie,
+> pipeline bez importów z run_analysis). Relewantne przy wdrożeniu tego ewentualnego
+> rozbicia sygnałów: w punkcie „Pliki do zmiany” `run_analysis._compute_goal` nie istnieje
+> już — logika celu mieszka w `nutrition_adaptive.build_goal_output`. Pełny opis fazy 10.0:
+> `docs/Refactoring.md → „Faza 10.0”`.
+
 ---
 
 ## Problem

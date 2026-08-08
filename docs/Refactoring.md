@@ -14,20 +14,23 @@ analytics/                 # pakiet
 ├── config/                # F1  centralna konfiguracja (okna, alphy, progi, zakresy)
 │   └── settings.py
 ├── validators/            # F2  walidacja metryk wejściowych (NaN/inf/zakres)
-│   └── metrics.py
+│   ├── metrics.py         #     walidatory metryk fizjologicznych
+│   └── input.py           # f10 validate_input/_parse_target/ALLOWED_SOURCES (z run_analysis)
 ├── exceptions.py          # F3  domenowe wyjątki (InsufficientData / InvalidMetric / ...)
 ├── logging.py             # F4  strukturalne logowanie (stderr, ANALYTICS_DEBUG=1)
 ├── models.py              # F6  typowane modele Pydantic (DailyMetrics, TempAlertStatus, ...)
 ├── baseline.py / acwr.py / temperature.py / nutrition_adaptive.py
+│   └── (f10) build_acwr / build_temp_alert / serialize_temp_output / build_goal_output
 ├── readiness_integration.py
 ├── confidence.py            # faza 2.0: Confidence Score (0-100, High/Medium/Low)
 ├── stability.py             # faza 3.0: Activity Stability (Stable/Moderately/Highly)
 ├── metrics.py               # faza 6.0: centralny rejestr metryk
-├── pipeline.py              # faza 7.0: Analytics Pipeline (6 stage'ów)
+├── pipeline.py              # faza 7.0: Analytics Pipeline (6 stage'ów) — NIE importuje run_analysis
 ├── explain.py               # faza 9.0: Explainability Layer (reason[] dla LLM)
 ├── fetch_apple.py / fetch_hevy.py / fetch_mfp.py
-└── run_analysis.py          # F5  refaktor: parse_input / validate_input / build_* / run
-tests/                     # F7  190 testów, pokrycie ~90% (algorytmy 100%)
+│   └── (f10) fetch_apple: build_apple_models
+└── run_analysis.py          # f10 thin CLI: parse_input / main / run->PIPELINE / _json_safe
+tests/                     # F7  213 testów, pokrycie ~90% (algorytmy 100%)
 .github/workflows/ci.yml   # F8  Ruff -> mypy -> pytest(coverage) na 3 wersjach Pythona
 pyproject.toml             # definicja pakietu + narzędzia (ruff, mypy, pytest)
 docs/
@@ -279,3 +282,61 @@ Raport: `acwr_detail.cardio` (acute/chronic/ratio/zone/n_cardio_days).
 cardio, gdy custom nazwa zawiera cardio-słowo (np. "Walking Lunges" + "walk"); (2) dopasowanie
 pełnej nazwy (zamknięty enum kategorii HealthKit); (3) dopasowanie po słowie kluczowym.
 „Rowing" (cardio) nie jest blokowane przez siłowe „row" — usunięte z czarnej listy.
+
+---
+
+# Faza 10.0 — odwrócenie zależności `run_analysis` → pipeline (thin CLI)
+
+**Branch:** `refactor/run-analysis-thin` (9 komitów). **Cel:** `run_analysis.py` jako
+cienki CLI, a `pipeline.py` całkowicie odłączony od `run_analysis` (zero cyklu).
+Zasada nadrzędna bez zmian: **zero modyfikacji logiki algorytmicznej** — tylko przenosiny
+kodu między plikami, gwarantowane bramką `test_pipeline_matches_run`.
+
+## Co zrobiono (kroki)
+
+| Krok | Zmiana | Plik docelowy |
+|------|--------|---------------|
+| 1 | `build_acwr()` + `ACWR_LOOKBACK_DAYS` | `acwr.py` |
+| 2 | `validate_input` + `_parse_target` + `ALLOWED_SOURCES` | `validators/input.py` |
+| 3 | `build_apple_models` + `MIN_HRV_POINTS` | `fetch_apple.py` |
+| 4 | `_compute_goal` → `build_goal_output`, `_temp_output` → `serialize_temp_output` | `nutrition_adaptive.py`, `temperature.py` |
+| 5 | `_build_temp_status` → `build_temp_alert` (**cykl znika** — ostatni import) | `temperature.py` |
+| 6 | `run_analysis.py` jako thin CLI (docstring) | — |
+| 7 | sprzątanie resztek + test braku cyklu | `test_pipeline.py` |
+| 8 | testy jednostkowe przeniesionych funkcji w nowych domach | `test_acwr/nutrition/temperature/validation` |
+| 9 | CI + dokumentacja (ten plik) | — |
+
+## Architektura po fazie 10.0
+
+```
+run_analysis.py  (thin CLI: parse_input / main / run->PIPELINE / _json_safe)
+        │
+        ▼  (run() deleguje lokalnym importem do PIPELINE)
+pipeline.py      (orkiestracja 6 stage'ów) — NIE importuje run_analysis
+        │
+        ▼  (importuje TYLKO moduły dziedzinowe)
+acwr / fetch_apple / temperature / nutrition_adaptive /
+validators / baseline / confidence / stability / explain / readiness_integration
+```
+
+Zależność jest **jednostronna**: `run_analysis → pipeline → moduły dziedzinowe`.
+`pipeline.py` nie zawiera żadnego importu z `run_analysis` — zależność cykliczna
+`pipeline → run_analysis → pipeline` (źródło potencjalnych problemów) całkowicie
+usunięta. Stan przed: pipeline importował 6 symboli z `run_analysis`.
+
+## Stan po fazie 10.0
+
+- **`run_analysis.py`: 389 → ~144 linie** (thin CLI).
+- **213 testów** zielone (było 190), w tym nowy `test_pipeline_does_not_import_run_analysis`
+  (analiza AST wszystkich modułów dziedzinowych — cykl nie wróci) + testy jednostkowe
+  przeniesionych funkcji w nowych domach.
+- **CI** (`.github/workflows/ci.yml`): ruff → mypy → `pytest --cov --cov-fail-under=80`
+  na Python 3.10/3.12/3.13, odpala się na `refactor/**` — ten branch objęty.
+- Deterministyczny output (bramka `test_pipeline_matches_run`) nietknięty.
+
+## Uwagi
+
+- `small_refactor.md` (rozdzielenie sygnałów aktywności) pozostaje **propozycją**
+  (wariant A; status niezmieniony) — niezależne od fazy 10.0.
+- `validators/input.py` jest osobnym modułem walidacji wejścia analizy (nie metryk);
+  `validators/__init__.py` re-exportuje `validate_input` dla wygody pipeline'u.

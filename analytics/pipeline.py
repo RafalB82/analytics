@@ -1,7 +1,7 @@
 """pipeline.py — Analytics Pipeline (faza 7.0).
 
 Jawna orkiestracja analizy jako sekwencji stage'ów zamiast jednej wielkiej
-funkcji. Cele (wg roadmapy 2.0 / docs/Refactoring.md):
+funkcji. Cele:
   - czystsza orkiestracja (InputValidation -> ModelBuilding -> Analytics
     -> Confidence -> Serialization -> Report)
   - łatwiejsze testy integracyjne (każdy stage testowalny osobno)

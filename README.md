@@ -98,8 +98,11 @@ python -m analytics.run_analysis '<json>'  # ręczny orchestrator
 > odrzucane — siła pochodzi wyłącznie z Hevy (zero dubli). Oba ACWR łączone na poziomie
 > gotowości zestawem `acwr_combined_modifier` (maksimum stref).
 >
-> TRIMP: `hr_max` brane z danej sesji (`max_heart_rate_bpm`), gdy dostępne — pełniejszy obraz
-> pułapu osiągniętego w tej aktywności; `hr_rest` zawsze z configu (poranne spoczynkowe).
+> TRIMP: referencją intensywności jest peak HR z danej sesji (`max_heart_rate_bpm`), gdy
+> dostępne — pełniejszy obraz pułapu osiągniętego w tej aktywności; NIE jest to fizjologiczne
+> HRmax. Opcjonalny dolny limit punktu odniesienia (`ACWR.hr_reference_floor_bpm`, domyślnie
+> 170) zabezpiecza lekkie treningi przed zawyżeniem względnej intensywności. `hr_rest` zawsze
+> z configu (poranne spoczynkowe).
 > Klasyfikacja cardio ma czarną listę siłowych słów kluczowych z pierwszeństwem, więc custom
 > nazwa typu "Walking Lunges" nie zostanie błędnie uznana za cardio.
 

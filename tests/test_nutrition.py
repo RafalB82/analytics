@@ -11,6 +11,7 @@ from analytics.nutrition_adaptive import (
     TDEEAdjustment,
     TDEEEstimate,
     adjust_tdee,
+    build_goal_output,
     compute_long_window_tdee,
     compute_protein_target,
     compute_tdee,
@@ -166,3 +167,51 @@ class TestComputeProteinTarget:
 
     def test_unknown_default(self):
         assert compute_protein_target(70.0, phase="xyz") == round(70 * 1.8, 0)
+
+
+class TestBuildGoalOutput:
+    """Testy build_goal_output (przeniesiony _compute_goal, krok 4/9)."""
+
+    def test_ok_with_energy_data(self):
+        """Wystarczająca ilość danych energii -> status ok z pełnym dictem."""
+        energy = _energy() * 8  # 8 dni
+        out = build_goal_output(energy, {"present": False}, {"phase": "utrzymanie"})
+        assert out["status"] == "ok"
+        assert out["goal"] == "utrzymanie"
+        assert out["tdee_kcal"] > 0
+        assert out["target_kcal"] == out["tdee_kcal"]  # utrzymanie = bez marży
+        assert out["long_window_28d"] is not None
+        assert out["weight"] == {"present": False}
+
+    def test_protein_needs_bodyweight(self):
+        """Bez wagi (present=False) białko jest None; z wagą liczone."""
+        energy = _energy() * 8
+        no_w = build_goal_output(energy, {"present": False}, {"phase": "utrzymanie"})
+        assert no_w["protein_g"] is None
+
+    def test_skipped_when_insufficient_energy(self):
+        """Brak danych energetycznych (basal/active None) -> status skipped."""
+        energy = [DailyEnergy(
+            day=date(2026, 8, 1) + timedelta(days=i),
+            basal_kj=None, active_kj=None,
+            exercise_min=None, stand_min=None, physical_effort=None,
+        ) for i in range(8)]
+        out = build_goal_output(energy, {"present": False}, {"phase": "utrzymanie"})
+        assert out["status"] == "skipped"
+        assert "reason" in out
+
+    def test_weighs_control_point(self):
+        """weight_info present -> weight_kg w output / używany do białka."""
+        energy = _energy() * 8
+        weight_info = {"present": True, "weight_kg": 70.0}
+        out = build_goal_output(energy, weight_info, {"phase": "utrzymanie"})
+        assert out["weight"] == weight_info
+        # białko dla 70 kg w utrzymaniu ~ 70*1.8 = 126
+        assert out["protein_g"] == round(70 * 1.8, 0)
+
+    def test_phase_redukcja_applies_margin(self):
+        """Cel 'redukcja' -> ujemna marża na target_kcal."""
+        energy = _energy() * 8
+        out = build_goal_output(energy, {"present": False}, {"phase": "redukcja"})
+        assert out["status"] == "ok"
+        assert out["target_kcal"] < out["tdee_kcal"]

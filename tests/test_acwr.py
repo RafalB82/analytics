@@ -6,10 +6,12 @@ from datetime import date, timedelta
 import pytest
 
 from analytics.acwr import (
+    ACWR_LOOKBACK_DAYS,
     SessionLoad,
     acwr_ratio,
     acwr_readiness_modifier,
     aggregate_daily_loads,
+    build_acwr,
     compute_acute_load,
     compute_chronic_load,
     compute_session_load,
@@ -183,3 +185,68 @@ class TestCardioSessionLoad:
         series = build_daily_load_series([], start, today, cardio_sessions=cardio)
         by_day = {s.day: s.load for s in series}
         assert by_day[today - timedelta(days=2)] == 300.0
+
+
+def _hevy_workout(day: date, load_series: list[tuple[float, int, float]]) -> dict:
+    """Buduje workout Hevy o zadanym sRPE-load (weight*reps*rpe)."""
+    return {
+        "startTime": day.isoformat(),
+        "exercises": [{
+            "sets": [
+                {"type": "normal", "weight": w, "reps": r, "rpe": rpe}
+                for w, r, rpe in load_series
+            ],
+        }],
+    }
+
+
+def _hevy_load(day: date, weight: float = 100.0) -> dict:
+    """Pojedynczy trening o load = weight (1 seria: weight kg x 1 rep x rpe=1)."""
+    return _hevy_workout(day, [(weight, 1, 1.0)])
+
+
+class TestBuildAcwr:
+    def test_returns_full_structure(self):
+        """build_acwr zwraca dict z result/acute/chronic/rpe_coverage/daily_loads."""
+        target = date(2026, 8, 7)
+        workouts = [_hevy_load(target - timedelta(days=i), weight=100.0) for i in range(28)]
+        out = build_acwr(workouts, target)
+        assert set(out) == {"result", "acute", "chronic", "rpe_coverage", "daily_loads"}
+        assert out["result"].ratio == 1.0
+        assert out["result"].zone == "optymalna"
+        # daily_loads: okno start..end włącznie = ACWR_LOOKBACK_DAYS + 1 dni
+        assert len(out["daily_loads"]) == ACWR_LOOKBACK_DAYS + 1
+
+    def test_high_risk_zone_with_spike(self):
+        """Gwałtowny wzrost obciążenia -> wysokie ryzyko."""
+        target = date(2026, 8, 7)
+        workouts = []
+        # ostatnie 7 dni: ciężkie (1000 kg load), wcześniejsze lekkie (100)
+        for i in range(28):
+            w = 1000.0 if i < 7 else 100.0
+            workouts.append(_hevy_load(target - timedelta(days=i), weight=w))
+        out = build_acwr(workouts, target)
+        assert out["result"].zone in ("podwyższone ryzyko", "wysokie ryzyko")
+
+    def test_empty_workouts_underload(self):
+        """Brak treningów -> niedociążenie, ratio 0."""
+        out = build_acwr([], date(2026, 8, 7))
+        assert out["result"].zone == "niedociążenie"
+        assert out["result"].ratio == 0.0
+
+    def test_rpe_coverage_reported(self):
+        """Pokrycie RPE liczone z dostarczonych treningów."""
+        target = date(2026, 8, 7)
+        w_mixed = {
+            "startTime": target.isoformat(),
+            "exercises": [
+                {"sets": [
+                    {"type": "normal", "weight": 100, "reps": 5, "rpe": 8},
+                    {"type": "normal", "weight": 100, "reps": 5, "rpe": None},
+                ]},
+            ],
+        }
+        out = build_acwr([w_mixed], target)
+        assert out["rpe_coverage"]["total_working"] == 2
+        assert out["rpe_coverage"]["with_rpe"] == 1
+        assert out["rpe_coverage"]["coverage_pct"] == 50.0

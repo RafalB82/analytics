@@ -5,7 +5,7 @@ from datetime import date
 
 import pytest
 
-from analytics.exceptions import InvalidMetricError
+from analytics.exceptions import InsufficientDataError, InvalidMetricError
 from analytics.validators import (
     coerce_float,
     ensure_sorted_ascending,
@@ -16,6 +16,7 @@ from analytics.validators import (
     sleep,
     temperature,
     validate_float,
+    validate_input,
     weight,
 )
 
@@ -113,3 +114,54 @@ class TestEnsureSortedAscending:
         days = [date(2026, 8, 3), date(2026, 8, 1), date(2026, 8, 2)]
         with pytest.raises(InvalidMetricError):
             ensure_sorted_ascending(days, "hrv")
+
+
+def _input_payload(**overrides) -> dict:
+    """Bazowy poprawny payload dla validate_input."""
+    payload = {
+        "source": "apple+hevy+mfp",
+        "target_date": "2026-08-07",
+        "apple_daily": [{"date": "2026-08-07", "heart_rate_variability": 55}],
+        "params": {},
+    }
+    payload.update(overrides)
+    return payload
+
+
+class TestValidateInput:
+    """Testy validate_input (przeniesiony do validators/input.py, krok 2/9)."""
+
+    def test_valid_returns_components(self):
+        source, target, params, apple_daily, hevy, mfp, temp = validate_input(_input_payload())
+        assert source == "apple+hevy+mfp"
+        assert target == date(2026, 8, 7)
+        assert apple_daily
+        assert params == {}
+        assert hevy == []
+        assert mfp == []
+        assert temp == []
+
+    def test_bad_source_rejected(self):
+        with pytest.raises(InvalidMetricError):
+            validate_input(_input_payload(source="garmin"))
+
+    def test_missing_source_rejected(self):
+        with pytest.raises(InvalidMetricError):
+            validate_input(_input_payload(source=None))
+
+    def test_missing_apple_daily_fallback(self):
+        with pytest.raises(InsufficientDataError):
+            validate_input(_input_payload(apple_daily=[]))
+
+    def test_invalid_target_date(self):
+        with pytest.raises(InvalidMetricError):
+            validate_input(_input_payload(target_date="not-a-date"))
+
+    def test_default_target_today(self):
+        _, target, *_ = validate_input(_input_payload(target_date=None))
+        assert target == date.today()
+
+    def test_optional_fields_default_empty(self):
+        out = validate_input(_input_payload(target_date="2026-08-07"))
+        *_, hevy, mfp, temp = out
+        assert hevy == [] and mfp == [] and temp == []

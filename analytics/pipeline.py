@@ -8,7 +8,9 @@ funkcji. Cele (wg roadmapy 2.0 / docs/Refactoring.md):
   - reużywalne, wymienialne stage'e
 
 WAŻNE: pipeline NIE zmienia wyniku algorytmicznego — reorganizuje istniejące
-kroki z run_analysis.run(). Determinizm outputu pozostaje nietknięty.
+kroki analizy w jawną sekwencję stage'ów. Zależność jest jednostronna:
+run_analysis.py (thin CLI) deleguje do PIPELINE; pipeline NIE importuje
+run_analysis (zero cyklu — patrz test_pipeline_does_not_import_run_analysis).
 """
 from __future__ import annotations
 

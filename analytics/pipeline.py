@@ -24,13 +24,13 @@ from . import explain as explain_mod
 from . import nutrition_adaptive as nutr_mod
 from . import stability as stab_mod
 from .config import settings
+from .fetch_apple import build_apple_models
 from .fetch_mfp import to_weight_series
 from .readiness_integration import compute_full_readiness
 from .run_analysis import (
     _build_temp_status,
     _compute_goal,
     _temp_output,
-    build_apple_models,
 )
 from .validators import validate_input
 

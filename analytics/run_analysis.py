@@ -52,13 +52,9 @@ from . import nutrition_adaptive as nutr_mod
 from . import temperature as temp_mod
 from .config import settings
 from .exceptions import InsufficientDataError, InvalidMetricError
-from .fetch_apple import build_apple_input
 from .logging import get_logger
 
 logger = get_logger("run_analysis")
-
-# Minimalna liczba punktów HRV do analizy (baseline + trend)
-MIN_HRV_POINTS = 6
 
 
 def _json_safe(o: Any) -> Any:
@@ -87,25 +83,6 @@ def parse_input(raw: str) -> dict:
     if not isinstance(payload, dict):
         raise InvalidMetricError("input_json", type(payload).__name__, "oczekiwano obiektu JSON")
     return payload
-
-
-# --- Faza 3: build_models (dane -> serie analityczne) ------------------------
-
-
-def build_apple_models(apple_daily: list, target: date, apple_temp: list) -> dict:
-    """Konwertuje surowe dict z Apple na serie MetricPoint / sleep / temp."""
-    apple_in = build_apple_input(apple_daily, target, temp_points=apple_temp)
-
-    hrv_series = apple_in["hrv_series"]
-    if not hrv_series or len(hrv_series) < MIN_HRV_POINTS:
-        raise InsufficientDataError(
-            f"insufficient_hrv_history: {len(hrv_series)} punktów (min. {MIN_HRV_POINTS})"
-        )
-
-    logger.info("Apple: %d HRV, %d RHR, sen=%s, temp=%d",
-                len(hrv_series), len(apple_in["rhr_series"]),
-                apple_in["sleep_hours_today"], len(apple_in["temp_series"]))
-    return apple_in
 
 
 # --- Faza 4: analyse (logika analityczna) ------------------------------------

@@ -21,6 +21,7 @@ from datetime import date
 from typing import Any
 
 from .baseline import MetricPoint
+from .exceptions import InsufficientDataError
 from .logging import get_logger
 from .nutrition_adaptive import DailyEnergy
 from .validators import hrv as _val_hrv
@@ -29,6 +30,10 @@ from .validators import sleep as _val_sleep
 from .validators import temperature as _val_temp
 
 logger = get_logger(__name__)
+
+# Minimalna liczba punktów HRV do analizy (baseline + trend) — konsumowana
+# przez build_apple_models. Wędruje z właścicielem (nie do walidatora).
+MIN_HRV_POINTS = 6
 
 
 def _d(d: dict) -> date:
@@ -184,6 +189,26 @@ def build_apple_input(
         "energy_series": to_energy_series(daily),
         "weight_info": latest_weight(daily),
     }
+
+
+def build_apple_models(apple_daily: list, target: date, apple_temp: list) -> dict:
+    """Konwertuje surowe dict z Apple na serie MetricPoint / sleep / temp.
+
+    Wrapper na build_apple_input + kontrola minimalnej liczby punktów HRV
+    (MIN_HRV_POINTS) + logowanie podsumowania.
+    """
+    apple_in = build_apple_input(apple_daily, target, temp_points=apple_temp)
+
+    hrv_series = apple_in["hrv_series"]
+    if not hrv_series or len(hrv_series) < MIN_HRV_POINTS:
+        raise InsufficientDataError(
+            f"insufficient_hrv_history: {len(hrv_series)} punktów (min. {MIN_HRV_POINTS})"
+        )
+
+    logger.info("Apple: %d HRV, %d RHR, sen=%s, temp=%d",
+                len(hrv_series), len(apple_in["rhr_series"]),
+                apple_in["sleep_hours_today"], len(apple_in["temp_series"]))
+    return apple_in
 
 
 if __name__ == "__main__":

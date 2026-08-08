@@ -31,8 +31,8 @@ from .run_analysis import (
     _compute_goal,
     _temp_output,
     build_apple_models,
-    validate_input,
 )
+from .validators import validate_input
 
 
 @dataclass

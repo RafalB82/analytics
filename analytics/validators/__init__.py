@@ -1,4 +1,5 @@
 """Walidatory metryk wejściowych (HRV, RHR, sen, temperatura, waga, tonaż)."""
+from .input import ALLOWED_SOURCES, validate_input
 from .metrics import (
     coerce_float,
     ensure_sorted_ascending,
@@ -13,6 +14,7 @@ from .metrics import (
 )
 
 __all__ = [
+    "ALLOWED_SOURCES",
     "coerce_float",
     "ensure_sorted_ascending",
     "hrv",
@@ -22,5 +24,6 @@ __all__ = [
     "sleep",
     "temperature",
     "validate_float",
+    "validate_input",
     "weight",
 ]

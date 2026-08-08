@@ -57,8 +57,6 @@ from .logging import get_logger
 
 logger = get_logger("run_analysis")
 
-ALLOWED_SOURCES = {"apple+hevy+mfp"}
-
 # Minimalna liczba punktów HRV do analizy (baseline + trend)
 MIN_HRV_POINTS = 6
 
@@ -89,46 +87,6 @@ def parse_input(raw: str) -> dict:
     if not isinstance(payload, dict):
         raise InvalidMetricError("input_json", type(payload).__name__, "oczekiwano obiektu JSON")
     return payload
-
-
-# --- Faza 2: validate_input --------------------------------------------------
-
-
-def validate_input(payload: dict) -> tuple[str, date, dict, list, list, list, list, list, list]:
-    """Weryfikuje źródło i obecność danych. Zwraca uporządkowane składowe.
-
-    Zwraca: (source, target, params, apple_daily, hevy_workouts, apple_workouts,
-    cardio_sessions, mfp_weight, apple_temp).
-    """
-    source = payload.get("source")
-    if source not in ALLOWED_SOURCES:
-        raise InvalidMetricError(
-            "source", source, f"oczekiwano '{'apple+hevy+mfp'}', otrzymano '{source}'"
-        )
-
-    apple_daily = payload.get("apple_daily", [])
-    if not apple_daily:
-        raise InsufficientDataError("missing_apple_daily: brak danych z Apple")
-
-    target = _parse_target(payload.get("target_date"))
-    params = payload.get("params", {})
-    hevy_workouts = payload.get("hevy_workouts", [])
-    apple_workouts = payload.get("apple_workouts", [])
-    cardio_sessions = payload.get("cardio_sessions", [])
-    mfp_weight = payload.get("mfp_weight") or []
-    apple_temp = payload.get("apple_temp") or []
-
-    return (source, target, params, apple_daily, hevy_workouts, apple_workouts,
-            cardio_sessions, mfp_weight, apple_temp)
-
-
-def _parse_target(s: str | None) -> date:
-    if not s:
-        return date.today()
-    try:
-        return date.fromisoformat(str(s)[:10])
-    except ValueError as e:
-        raise InvalidMetricError("target_date", s, f"niepoprawna data: {e}") from e
 
 
 # --- Faza 3: build_models (dane -> serie analityczne) ------------------------

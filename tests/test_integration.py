@@ -12,7 +12,8 @@ import json
 from datetime import date, timedelta
 
 from analytics.exceptions import InsufficientDataError, InvalidMetricError
-from analytics.run_analysis import parse_input, run, validate_input
+from analytics.run_analysis import parse_input, run
+from analytics.validators import validate_input
 
 
 def _mk_apple(n_days: int = 14, end: date | None = None) -> list[dict]:

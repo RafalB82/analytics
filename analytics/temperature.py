@@ -12,12 +12,13 @@ Zależności: numpy
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import date
 
 import numpy as np
 
-from .config.settings import TEMPERATURE as _CFG
+from .baseline import compute_ewma_baseline
+from .config import settings
 from .logging import get_logger
 
 logger = get_logger(__name__)
@@ -39,7 +40,7 @@ class TempAlert:
     combined_with_hrv_drop: bool = False
 
 
-def compute_temp_baseline(series: list[TempPoint], window: int = _CFG.baseline_window) -> float:
+def compute_temp_baseline(series: list[TempPoint], window: int | None = None) -> float:
     """
     Baseline nocnej temperatury nadgarstka.
     Uwaga: HealthKit zwraca już wartość jako odchylenie od bazowej
@@ -48,6 +49,8 @@ def compute_temp_baseline(series: list[TempPoint], window: int = _CFG.baseline_w
     raczej do wygładzenia szumu niż wyznaczenia nowej normy od zera.
     Jeśli pobierasz bezwzględną temperaturę, licz normalnie.
     """
+    if window is None:
+        window = settings.TEMPERATURE.baseline_window
     recent = [p.wrist_temp_c for p in series[-window:]]
     if not recent:
         return 0.0
@@ -57,7 +60,7 @@ def compute_temp_baseline(series: list[TempPoint], window: int = _CFG.baseline_w
 def temp_deviation_alert(
     current: float,
     baseline: float,
-    threshold_c: float = _CFG.threshold_c,
+    threshold_c: float | None = None,
     hrv_dropped: bool = False,
 ) -> TempAlert:
     """
@@ -70,12 +73,14 @@ def temp_deviation_alert(
     oznacz jako "znacząca" — dwa niezależne sygnały fizjologiczne
     razem znacznie zwiększają pewność, że to nie szum pomiarowy.
     """
+    if threshold_c is None:
+        threshold_c = settings.TEMPERATURE.threshold_c
     deviation = round(current - baseline, 3)
     triggered = deviation >= threshold_c
 
     if not triggered:
         severity = "brak"
-    elif deviation >= threshold_c * _CFG.significant_multiplier or (triggered and hrv_dropped):
+    elif deviation >= threshold_c * settings.TEMPERATURE.significant_multiplier or (triggered and hrv_dropped):
         severity = "znacząca"
     else:
         severity = "podwyższona"
@@ -127,3 +132,45 @@ def build_temp_override_message(alert: TempAlert, spo2_confirmed: bool) -> str |
         f"Podwyższona temperatura nadgarstka (+{alert.deviation_c}°C). "
         f"Obserwuj, bez automatycznej zmiany strefy."
     )
+
+
+def serialize_temp_output(alert, temp_series, target: date) -> dict:
+    """Serializuje alert temperatury do dictu outputu (bez obiektu wewnątrz)."""
+    if not temp_series:
+        return {"status": "no_data", "alert": None, "override_message": None}
+
+    bl = compute_temp_baseline(temp_series)
+    current_points = [p for p in temp_series if p.day == target]
+    current = current_points[0].wrist_temp_c if current_points else temp_series[-1].wrist_temp_c
+    return {
+        "status": "ok",
+        "baseline_c": bl,
+        "current_c": current,
+        "deviation_c": round(current - bl, 3),
+        "alert": asdict(alert),
+        "override_message": build_temp_override_message(alert, spo2_confirmed=False),
+    }
+
+
+def build_temp_alert(temp_series, hrv_series, target: date) -> TempAlert:
+    """Buduje obiekt TempAlert z serii temperatury i HRV (override dla readiness)."""
+    if not temp_series:
+        return TempAlert(
+            triggered=False, deviation_c=0.0, baseline_c=0.0, severity="brak",
+            combined_with_hrv_drop=False,
+        )
+
+    bl = compute_temp_baseline(temp_series)
+    current_points = [p for p in temp_series if p.day == target]
+    current = current_points[0].wrist_temp_c if current_points else temp_series[-1].wrist_temp_c
+
+    hrv_dropped = False
+    if hrv_series:
+        bl_hrv = compute_ewma_baseline(hrv_series)
+        if bl_hrv and bl_hrv.deviation_pct <= -10:
+            hrv_dropped = True
+
+    alert = temp_deviation_alert(current=current, baseline=bl, hrv_dropped=hrv_dropped)
+    msg = build_temp_override_message(alert, spo2_confirmed=False)
+    logger.debug("temp override: %s", msg if msg else "brak")
+    return alert

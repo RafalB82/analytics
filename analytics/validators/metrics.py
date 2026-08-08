@@ -104,10 +104,11 @@ def reps(value: object) -> int | None:
 
 
 def ensure_sorted_ascending(days: list[date], metric: str) -> None:
-    """Weryfikuje, że szereg dat jest posortowany rosnąco (wymaganie EWMA).
+    """Weryfikuje posortowanie szeregu dat rosnąco (wymaganie EWMA).
 
-    Nie rzuca — zwraca tylko informację; sortowanie jest naprawialne.
-    Zwraca True gdy posortowane, False gdy nie.
+    Rzuca `InvalidMetricError`, gdy szereg nie jest posortowany rosnąco.
+    W przeciwnym razie nie zwraca wartości (None) — nie używaj wyniku
+    w warunku `if`; wywołaj wewnątrz try/except.
     """
     for i in range(1, len(days)):
         if days[i] < days[i - 1]:

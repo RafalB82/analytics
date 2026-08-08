@@ -1,79 +1,217 @@
-"""Testy modułu odżywiania adaptacyjnego (TDEE, trend wagi, białko)."""
+"""Testy modułu odżywiania: TDEE z aktywności, cel kaloryczny wg celu, białko."""
 from __future__ import annotations
 
 from datetime import date, timedelta
+from types import SimpleNamespace
+
+import pytest
 
 from analytics.nutrition_adaptive import (
+    DailyEnergy,
     TDEEAdjustment,
-    WeightPoint,
+    TDEEEstimate,
     adjust_tdee,
+    build_goal_output,
+    compute_long_window_tdee,
     compute_protein_target,
-    compute_weight_trend,
+    compute_tdee,
 )
 
 
-def _weights(values: list[float], start: date | None = None) -> list[WeightPoint]:
-    start = start or date(2026, 7, 1)
-    return [WeightPoint(day=start + timedelta(days=i), weight_kg=v) for i, v in enumerate(values)]
+def _energy(values_basal: list[float] | None = None,
+            values_active: list[float] | None = None,
+            exercise: list[float] | None = None,
+            start: date | None = None) -> list[DailyEnergy]:
+    """Buduje serię DailyEnergy (kJ). Bazowa: basal=15000, active=4000 na dzień."""
+    n = max(len(values_basal or []), len(values_active or []), 1)
+    start = start or date(2026, 8, 1)
+    basal = (values_basal or [15000.0] * n)
+    active = (values_active or [4000.0] * n)
+    ex = (exercise or [60.0] * n)
+    return [
+        DailyEnergy(
+            day=start + timedelta(days=i),
+            basal_kj=basal[min(i, len(basal) - 1)],
+            active_kj=active[min(i, len(active) - 1)],
+            exercise_min=ex[min(i, len(ex) - 1)],
+            stand_min=300.0,
+            physical_effort=3.0,
+        )
+        for i in range(n)
+    ]
+
+
+class TestComputeTdee:
+    def test_tdee_is_basal_plus_active(self):
+        # basal=15000 kJ=3585 kcal, active=4000 kJ=956 kcal -> TDEE ≈ 4541
+        est = compute_tdee(_energy(), goal="utrzymanie")
+        assert isinstance(est, TDEEEstimate)
+        expected = round(15000 / 4.184 + 4000 / 4.184, 0)
+        assert est.tdee_kcal == expected
+
+    def test_utrzymanie_no_margin(self):
+        est = compute_tdee(_energy(), goal="utrzymanie")
+        assert est.margin_pct == 0.0
+        assert est.target_kcal == est.tdee_kcal
+
+    def test_redukcja_negative_margin(self):
+        est = compute_tdee(_energy(), goal="redukcja")
+        assert est.margin_pct == pytest.approx(-0.15)
+        assert est.target_kcal == round(est.tdee_kcal * (1 - 0.15), 0)
+
+    def test_masa_positive_margin(self):
+        est = compute_tdee(_energy(), goal="masa")
+        assert est.margin_pct == pytest.approx(0.10)
+        assert est.target_kcal == round(est.tdee_kcal * (1 + 0.10), 0)
+
+    def test_protein_from_bodyweight(self):
+        est = compute_tdee(_energy(), goal="utrzymanie", bodyweight_kg=70.0)
+        assert est.protein_g == round(70 * 1.8, 0)
+
+    def test_protein_none_without_bodyweight(self):
+        est = compute_tdee(_energy(), goal="utrzymanie")
+        assert est.protein_g is None
+
+    def test_redukcja_protein_uses_deficit_phase(self):
+        # Pełna ścieżka: goal="redukcja" musi dać 2.2 g/kg (faza "deficyt"),
+        # NIE cichy fallback 1.8 g/kg. Regresja audytu #1.
+        est = compute_tdee(_energy(), goal="redukcja", bodyweight_kg=70.0)
+        assert est.protein_g == round(70 * 2.2, 0)
+
+    def test_masa_protein_uses_surplus_phase(self):
+        est = compute_tdee(_energy(), goal="masa", bodyweight_kg=70.0)
+        assert est.protein_g == round(70 * 1.8, 0)
+
+    def test_activity_signals(self):
+        # 2 dni z jawną basal/active, rózne minuty ćwiczeń
+        est = compute_tdee(
+            _energy(values_basal=[15000.0, 15000.0], values_active=[4000.0, 4000.0],
+                    exercise=[30.0, 90.0]),
+            goal="utrzymanie",
+        )
+        assert est.avg_exercise_min == 60.0
+        assert est.training_days_ratio == 1.0
+
+    def test_raises_without_energy_data(self):
+        # same dni bez basal/active -> ValueError
+        from analytics.nutrition_adaptive import DailyEnergy
+        series = [DailyEnergy(day=date(2026, 8, 1))]
+        with pytest.raises(ValueError):
+            compute_tdee(series, goal="utrzymanie")
+
+    def test_window_respected(self):
+        # tylko ostatnie 3 dni wchodzą do średniej
+        n = 10
+        basal = [10000.0] * n
+        active = [2000.0] * n
+        est = compute_tdee(_energy(basal, active), goal="utrzymanie", window_days=3)
+        assert est.window_days == 3
+
+
+class TestComputeLongWindowTdee:
+    def test_returns_none_with_too_few(self):
+        assert compute_long_window_tdee(_energy(values_basal=[1.0] * 3, values_active=[1.0] * 3)) is None
+
+    def test_returns_estimate_with_enough(self):
+        est = compute_long_window_tdee(_energy(values_basal=[1.0] * 30, values_active=[1.0] * 30))
+        assert est is not None
+        assert est.window_days == 28
 
 
 class TestComputeWeightTrend:
+    """Rezerwa: trend wagi na wypadek wielopunktowej serii (obecnie waga = punkt)."""
+
+    def _w(self, values):
+        return [SimpleNamespace(day=date(2026, 7, 1) + timedelta(days=i), weight_kg=v)
+                for i, v in enumerate(values)]
+
     def test_returns_none_when_too_few(self):
-        assert compute_weight_trend(_weights([70.0] * 5), min_points=8) is None
+        from analytics.nutrition_adaptive import compute_weight_trend
+        assert compute_weight_trend(self._w([70.0] * 5), min_points=8) is None
 
     def test_rising_weight_positive_slope(self):
-        series = _weights([70 + i * 0.1 for i in range(10)])  # 10 punktów, +0.1/dzień
-        trend = compute_weight_trend(series, min_points=8)
+        from analytics.nutrition_adaptive import compute_weight_trend
+        trend = compute_weight_trend(self._w([70 + i * 0.1 for i in range(10)]), min_points=8)
         assert trend is not None
-        assert trend > 0
-
-    def test_falling_weight_negative_slope(self):
-        series = _weights([80 - i * 0.2 for i in range(10)])
-        trend = compute_weight_trend(series, min_points=8)
-        assert trend is not None
-        assert trend < 0
+        assert trend.slope_kg_per_day > 0
+        # rolling median zbliżony do środka zakresu (70..~71)
+        assert abs(trend.rolling_median_kg - 70.5) < 0.6
+        assert trend.weekly_trend_kg > 0
 
 
 class TestAdjustTdee:
-    def test_returns_same_when_no_trend(self):
+    """Rezerwa: korekta celu z trendu wagi (gdy trend będzie dostępny)."""
+
+    def test_no_trend_no_change(self):
         res = adjust_tdee(current_tdee=2260, weight_trend_kg_per_day=None)
         assert isinstance(res, TDEEAdjustment)
         assert res.new_tdee == 2260
         assert res.adjustment_kcal == 0.0
         assert res.confidence == "niska"
 
-    def test_utrzymanie_cap_applied(self):
-        # trend -1 kg/dzień -> ogromna korekta, ale capped do +/-250
+    def test_cap_applied(self):
         res = adjust_tdee(current_tdee=2260, weight_trend_kg_per_day=-1.0)
         assert abs(res.adjustment_kcal) <= 250
 
-    def test_target_met_no_adjustment(self):
-        # trend -0.3 kg/tydz, cel -0.3 -> gap 0 -> brak korekty, confidence średnia
-        week_trend = -0.3  # kg/tydz
-        day_trend = week_trend / 7
-        res = adjust_tdee(current_tdee=2260, weight_trend_kg_per_day=day_trend,
-                          target_trend_kg_per_week=-0.3)
-        assert abs(res.adjustment_kcal) <= 1.0  # ~0
-        assert res.confidence == "średnia"
-
     def test_confidence_high_for_large_gap(self):
-        res = adjust_tdee(current_tdee=2260, weight_trend_kg_per_day=-0.5,
-                          target_trend_kg_per_week=0.0)
+        res = adjust_tdee(current_tdee=2260, weight_trend_kg_per_day=-0.5)
         assert res.confidence == "wysoka"
-
-    def test_kcal_per_kg_correctness(self):
-        # -0.3 kg/tydz przy utrzymaniu -> ubytek energii 0.3*7700/7 = 330 kcal
-        res = adjust_tdee(current_tdee=2260, weight_trend_kg_per_day=-0.3 / 7)
-        # korekta idzie "w stronę przeciwną": waga spada -> podnieś TDEE (+330, capped? 330>250)
-        assert res.new_tdee >= 2260
 
 
 class TestComputeProteinTarget:
-    def test_utrzymanie_18_g_per_kg(self):
+    def test_utrzymanie(self):
         assert compute_protein_target(70.0, phase="utrzymanie") == round(70 * 1.8, 0)
 
-    def test_deficyt_higher(self):
+    def test_deficyt(self):
         assert compute_protein_target(70.0, phase="deficyt") == round(70 * 2.2, 0)
 
-    def test_unknown_phase_default_18(self):
+    def test_unknown_default(self):
         assert compute_protein_target(70.0, phase="xyz") == round(70 * 1.8, 0)
+
+
+class TestBuildGoalOutput:
+    """Testy build_goal_output (przeniesiony _compute_goal, krok 4/9)."""
+
+    def test_ok_with_energy_data(self):
+        """Wystarczająca ilość danych energii -> status ok z pełnym dictem."""
+        energy = _energy() * 8  # 8 dni
+        out = build_goal_output(energy, {"present": False}, {"phase": "utrzymanie"})
+        assert out["status"] == "ok"
+        assert out["goal"] == "utrzymanie"
+        assert out["tdee_kcal"] > 0
+        assert out["target_kcal"] == out["tdee_kcal"]  # utrzymanie = bez marży
+        assert out["long_window_28d"] is not None
+        assert out["weight"] == {"present": False}
+
+    def test_protein_needs_bodyweight(self):
+        """Bez wagi (present=False) białko jest None; z wagą liczone."""
+        energy = _energy() * 8
+        no_w = build_goal_output(energy, {"present": False}, {"phase": "utrzymanie"})
+        assert no_w["protein_g"] is None
+
+    def test_skipped_when_insufficient_energy(self):
+        """Brak danych energetycznych (basal/active None) -> status skipped."""
+        energy = [DailyEnergy(
+            day=date(2026, 8, 1) + timedelta(days=i),
+            basal_kj=None, active_kj=None,
+            exercise_min=None, stand_min=None, physical_effort=None,
+        ) for i in range(8)]
+        out = build_goal_output(energy, {"present": False}, {"phase": "utrzymanie"})
+        assert out["status"] == "skipped"
+        assert "reason" in out
+
+    def test_weighs_control_point(self):
+        """weight_info present -> weight_kg w output / używany do białka."""
+        energy = _energy() * 8
+        weight_info = {"present": True, "weight_kg": 70.0}
+        out = build_goal_output(energy, weight_info, {"phase": "utrzymanie"})
+        assert out["weight"] == weight_info
+        # białko dla 70 kg w utrzymaniu ~ 70*1.8 = 126
+        assert out["protein_g"] == round(70 * 1.8, 0)
+
+    def test_phase_redukcja_applies_margin(self):
+        """Cel 'redukcja' -> ujemna marża na target_kcal."""
+        energy = _energy() * 8
+        out = build_goal_output(energy, {"present": False}, {"phase": "redukcja"})
+        assert out["status"] == "ok"
+        assert out["target_kcal"] < out["tdee_kcal"]

@@ -1,25 +1,34 @@
 #!/usr/bin/env python3
 """
-fetch_mfp.py — warstwa pobierania wagi z MFP (przez mcp_tool.py).
+fetch_mfp.py — warstwa odczytu danych MFP (MyFitnessPal).
 
-MFP nie przechowuje obecnie wagi u Rafała (mcp measurements zwraca pustą
-listę), więc ta warstwa jest OPCJONALNA — gdy brak danych, moduł TDEE
-returns "niska" confidence bez korekty. Nie blokuje reszty analizy.
+ROLA (po redesignie): MFP dostarcza WYŁĄCZNIE zjedzone kalorie/jedzenie.
+Nie jest już źródłem wagi (waga pochodzi z Apple Health) ani źródłem
+celu kalorycznego (cel liczony z aktywności Apple — patrz nutrition_adaptive).
 
-Nie woła MCP samodzielnie — przyjmuje listę punktów wagowych i konwertuje
-na WeightPoint dla nutrition_adaptive.compute_weight_trend.
+`to_weight_series` pozostaje jako REZERWA/backward-compat na wypadek, gdyby
+kiedyś chciano trendować wagę z MFP (format: [{date, value}] -> obiekty
+z atrybutami .day/.weight_kg, kompatybilne z compute_weight_trend).
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date
 
-from .nutrition_adaptive import WeightPoint
 from .validators import weight as _val_weight
 
 
-def to_weight_series(mfp_weight_rows: list[dict]) -> list[WeightPoint]:
+@dataclass
+class WeightSample:
+    """Punkt wagowy (kompatybilny z rezerwowym compute_weight_trend)."""
+
+    day: date
+    weight_kg: float
+
+
+def to_weight_series(mfp_weight_rows: list[dict]) -> list[WeightSample]:
     """
-    Wiersze pomiarów MFP (każdy {date: ..., value: ...}) -> lista WeightPoint.
+    Wiersze pomiarów MFP (każdy {date: ..., value: ...}) -> lista WeightSample.
     Pomija wpisy bez sensownej wartości / z 'null'.
     """
     out = []
@@ -31,7 +40,7 @@ def to_weight_series(mfp_weight_rows: list[dict]) -> list[WeightPoint]:
         wt = _val_weight(v)
         if wt is None:
             continue
-        out.append(WeightPoint(day=date.fromisoformat(str(d)[:10]), weight_kg=wt))
+        out.append(WeightSample(day=date.fromisoformat(str(d)[:10]), weight_kg=wt))
     out.sort(key=lambda p: p.day)
     return out
 

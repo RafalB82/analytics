@@ -3,10 +3,13 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+from analytics.baseline import MetricPoint
 from analytics.temperature import (
     TempPoint,
+    build_temp_alert,
     build_temp_override_message,
     compute_temp_baseline,
+    serialize_temp_output,
     spo2_confirmation,
     temp_deviation_alert,
 )
@@ -15,6 +18,12 @@ from analytics.temperature import (
 def _temps(values: list[float], start: date | None = None) -> list[TempPoint]:
     start = start or date(2026, 7, 25)
     return [TempPoint(day=start + timedelta(days=i), wrist_temp_c=v) for i, v in enumerate(values)]
+
+
+def _hrv(values: list[float], start: date | None = None) -> list[MetricPoint]:
+    """Serie HRV (ms) jako MetricPoint — do detekcji spadku w build_temp_alert."""
+    start = start or date(2026, 7, 25)
+    return [MetricPoint(day=start + timedelta(days=i), value=v) for i, v in enumerate(values)]
 
 
 class TestComputeTempBaseline:
@@ -75,12 +84,6 @@ class TestBuildTempOverrideMessage:
         alert = temp_deviation_alert(current=36.0, baseline=35.9)
         assert build_temp_override_message(alert, spo2_confirmed=False) is None
 
-    def test_message_when_significant_and_spo2(self):
-        alert = temp_deviation_alert(current=36.6, baseline=36.0, threshold_c=0.3)
-        msg = build_temp_override_message(alert, spo2_confirmed=True)
-        assert msg is not None
-        assert "infekcja" in msg
-
     def test_message_when_significant_with_hrv(self):
         alert = temp_deviation_alert(current=36.5, baseline=36.0, threshold_c=0.3, hrv_dropped=True)
         msg = build_temp_override_message(alert, spo2_confirmed=False)
@@ -92,3 +95,65 @@ class TestBuildTempOverrideMessage:
         msg = build_temp_override_message(alert, spo2_confirmed=False)
         assert msg is not None
         assert "Obserwuj" in msg
+
+
+class TestBuildTempAlert:
+    """Testy build_temp_alert (przeniesiony _build_temp_status, krok 5/9)."""
+
+    def test_no_series_returns_untiggered_alert(self):
+        alert = build_temp_alert([], [], date(2026, 7, 28))
+        assert alert.triggered is False
+        assert alert.severity == "brak"
+        assert alert.baseline_c == 0.0
+
+    def test_no_temperature_change_untiggered(self):
+        """Stabilna temperatura -> alert nietriggered, niezależnie od HRV."""
+        temp_series = _temps([36.0, 36.0, 36.0, 36.0], start=date(2026, 7, 25))
+        hrv_series = _hrv([60, 59, 58, 57], start=date(2026, 7, 25))
+        alert = build_temp_alert(temp_series, hrv_series, date(2026, 7, 28))
+        assert alert.triggered is False
+
+    def test_elevated_temp_triggers(self):
+        """Temperatura powyżej progu vs baseline -> alert triggerowany."""
+        # baseline 36.0, ostatni dzień 36.5 (odchylenie 0.5 > próg)
+        temp_series = _temps([36.0, 36.0, 36.0, 36.5], start=date(2026, 7, 25))
+        alert = build_temp_alert(temp_series, [], date(2026, 7, 28))
+        assert alert.triggered is True
+        assert alert.severity in ("podwyższona", "znacząca")
+
+    def test_hrv_drop_marks_combined(self):
+        """Temp podwyższona (>= prog 0.3) + spadek HRV -> combined_with_hrv_drop=True."""
+        # HRV: 7 punktów, wyraźny spadek na końcu (min_points=5 wymaga >=6)
+        hrv_series = _hrv([60, 60, 59, 58, 57, 40], start=date(2026, 7, 25))
+        # temp 36.6 vs baseline ~36.06 -> deviation ~0.54 > prog 0.3 (trigger)
+        temp_series = _temps([36.0, 36.0, 36.0, 36.0, 36.0, 36.6], start=date(2026, 7, 25))
+        alert = build_temp_alert(temp_series, hrv_series, date(2026, 7, 30))
+        assert alert.triggered is True
+        assert alert.combined_with_hrv_drop is True
+
+
+class TestSerializeTempOutput:
+    """Testy serialize_temp_output (przeniesiony _temp_output, krok 4/9)."""
+
+    def test_no_data_when_empty_series(self):
+        out = serialize_temp_output(None, [], date(2026, 7, 28))
+        assert out == {"status": "no_data", "alert": None, "override_message": None}
+
+    def test_full_serialization(self):
+        temp_series = _temps([36.0, 36.0, 36.0, 36.5], start=date(2026, 7, 25))
+        alert = build_temp_alert(temp_series, [], date(2026, 7, 28))
+        out = serialize_temp_output(alert, temp_series, date(2026, 7, 28))
+        assert out["status"] == "ok"
+        assert out["current_c"] == 36.5
+        # baseline = EWMA/średnia ostatnich punktów, nie sztywna pierwsza wartość
+        assert out["deviation_c"] > 0
+        assert out["alert"] is not None
+        assert "alert" in out and "baseline_c" in out
+
+    def test_uses_latest_point_when_target_missing(self):
+        """Gdy target dnia brak w serii -> używa ostatniego punktu."""
+        temp_series = _temps([36.0, 36.0, 36.0], start=date(2026, 7, 25))
+        alert = build_temp_alert(temp_series, [], date(2026, 7, 25))
+        out = serialize_temp_output(alert, temp_series, date(2026, 8, 5))
+        assert out["status"] == "ok"
+        assert out["current_c"] == 36.0

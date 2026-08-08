@@ -149,6 +149,15 @@ def latest_weight(daily: list[dict]) -> dict:
     z polami weight_kg / body_fat_pct / lean_kg / bmi / height / date lub
     {'present': False} gdy brak.
 
+    Kolejność wejściowego `daily` NIE jest istotna: funkcja jawnie sortuje
+    rosnąco po dacie przed wyborem najnowszego punktu — tak jak reszta modułu
+    (to_hrv_series/to_rhr_series/to_temp_series) kończy się out.sort(...),
+    bo nie ufa kolejności, w jakiej API zwraca dni. Wcześniej latest_weight
+    opierał się na samym reversed(daily) zakładając milcząco, że daily jest
+    już posortowane rosnąco — to założenie łamało się przy naturalnym
+    budowaniu listy "najnowszy pierwszy" (dziś, wczoraj, przedwczoraj...),
+    gdzie reversed zaczynał od najstarszego dnia.
+
     Waliduje zakres (RANGES.weight, 40-200 kg) przez `_val_weight` — spójnie
     z to_hrv_series/to_rhr_series (patrz test_hrv_invalid_raises) i z
     fetch_mfp.to_weight_series (test_invalid_weight_raises): wartość poza
@@ -162,7 +171,8 @@ def latest_weight(daily: list[dict]) -> dict:
     fallback na starszy punkt przy uszkodzonym najnowszym, to decyzja do
     podjęcia świadomie w warstwie wyżej (np. run_analysis), nie po cichu tutaj.
     """
-    for d in reversed(daily):
+    daily_sorted = sorted(daily, key=_d)
+    for d in reversed(daily_sorted):
         w = d.get("weight_body_mass")
         if w is not None:
             return {

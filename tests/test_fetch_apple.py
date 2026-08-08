@@ -96,6 +96,16 @@ class TestLatestWeight:
         daily = [_day("2026-08-01")]
         assert latest_weight(daily)["present"] is False
 
+    def test_out_of_range_weight_raises(self):
+        """AUDYT fix: literówka (710 zamiast 71.0) nie może cicho przejść do
+        compute_protein_target/TDEE — musi rzucić, spójnie z to_hrv_series
+        (test_hrv_invalid_raises) i fetch_mfp.to_weight_series
+        (test_invalid_weight_raises), które już tak się zachowują dla
+        analogicznych uszkodzonych wartości."""
+        daily = [_day("2026-08-07", weight_body_mass=710.0)]
+        with pytest.raises(InvalidMetricError):
+            latest_weight(daily)
+
 
 class TestTempSeries:
     def test_to_temp_series_from_points(self):

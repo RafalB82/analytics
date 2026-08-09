@@ -151,6 +151,9 @@ def analytics_stage(ctx: PipelineContext) -> PipelineContext:
     """Stage 3: logika analityczna (readiness, temp, TDEE, trendy)."""
     m = ctx.models
     assert ctx.target is not None
+    # trendy obliczane PRZED readiness (potrzebny rhr_trend w osi RECOVERY)
+    ctx.trend_hrv = baseline_mod.compute_trend_slope(m["hrv_series"])
+    ctx.trend_rhr = baseline_mod.compute_trend_slope(m["rhr_series"])
     ctx.temp_alert = temp_mod.build_temp_alert(m["temp_series"], m["hrv_series"], ctx.target)
     ctx.readiness = compute_full_readiness(
         hrv_series=m["hrv_series"],
@@ -163,6 +166,7 @@ def analytics_stage(ctx: PipelineContext) -> PipelineContext:
         spo2_confirmed=False,
         gap=ctx.acwr_info.get("gap"),
         rpe_coverage_pct=(ctx.acwr_info.get("rpe_coverage") or {}).get("coverage_pct"),
+        rhr_trend=ctx.trend_rhr,
     )
     ctx.goal_info = nutr_mod.build_goal_output(m["energy_series"], m["weight_info"], ctx.params)
 
@@ -174,8 +178,6 @@ def analytics_stage(ctx: PipelineContext) -> PipelineContext:
         ctx.mfp_daily_kcal, target_kcal,
     ) if target_kcal else {"status": "skipped", "reason": "brak target_kcal (TDEE niedostępny)"}
 
-    ctx.trend_hrv = baseline_mod.compute_trend_slope(m["hrv_series"])
-    ctx.trend_rhr = baseline_mod.compute_trend_slope(m["rhr_series"])
     return ctx
 
 

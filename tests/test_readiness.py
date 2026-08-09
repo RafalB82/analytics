@@ -6,9 +6,10 @@ from datetime import date, timedelta
 import pytest
 
 from analytics.acwr import ACWRResult, GapInfo
-from analytics.baseline import MetricPoint
+from analytics.baseline import MetricPoint, TrendResult
 from analytics.exceptions import MissingBaselineError
 from analytics.readiness_integration import (
+    classify_recovery,
     classify_zone,
     compute_full_readiness,
     score_hrv_rhr_sleep,
@@ -319,3 +320,89 @@ class TestAxesAndVerdict:
     def test_data_quality_high_when_clean(self):
         out = self._readiness(sleep=8.0, rpe_cov=100.0)
         assert out.data_quality["status"] == "high"
+
+    # --- faza 6.2c: RHR trend jako sygnał ostrzegawczy w RECOVERY ---
+
+    @staticmethod
+    def _rising_rhr(reliable: bool = True, r2: float = 0.9, slope: float = 0.5):
+        # rosnący, wiarygodny trend RHR
+        return TrendResult(slope=slope, r_squared=r2, direction="rosnący", reliable=reliable)
+
+    def test_rising_reliable_rhr_promotes_ok_to_degraded(self):
+        # ostatni dzień wartości w normie (base ~0) + rosnący trend RHR
+        # -> recovery podbite z ok do degraded (sygnał ostrzegawczy)
+        out = compute_full_readiness(
+            hrv_series=_series([45] * 8), rhr_series=_series([55] * 8),
+            sleep_hours_today=8.0,
+            acwr_result=_acwr(zone="optymalna", ratio=1.0),
+            temp_alert=_temp(), spo2_confirmed=False,
+            rhr_trend=self._rising_rhr(),
+        )
+        assert out.recovery["base_score"] == 0        # sam base ok
+        assert out.recovery["rhr_trend_warning"] is True
+        assert out.recovery["status"] == "degraded"   # podbite z ok
+
+    def test_rising_reliable_rhr_promotes_degraded_to_critical(self):
+        # delikatny spadek HRV (base 2 -> degraded) + rosnący trend RHR
+        # podbija degraded -> critical
+        hrv_series = _series([45] * 7 + [30])   # base 2
+        out = compute_full_readiness(
+            hrv_series=hrv_series, rhr_series=_series([55] * 8),
+            sleep_hours_today=8.0,
+            acwr_result=_acwr(zone="optymalna", ratio=1.0),
+            temp_alert=_temp(), spo2_confirmed=False,
+            rhr_trend=self._rising_rhr(),
+        )
+        assert out.recovery["base_score"] == 2        # z HRV
+        assert out.recovery["rhr_trend_warning"] is True
+        assert out.recovery["status"] == "critical"   # degraded + trend -> critical
+
+    def test_rising_rhr_alone_never_reaches_critical_from_ok(self):
+        # sam rosnący trend RHR (base ok=0) NIE tworzy critical — tylko degraded
+        out = compute_full_readiness(
+            hrv_series=_series([45] * 8), rhr_series=_series([55] * 8),
+            sleep_hours_today=8.0,
+            acwr_result=_acwr(zone="optymalna", ratio=1.0),
+            temp_alert=_temp(), spo2_confirmed=False,
+            rhr_trend=self._rising_rhr(),
+        )
+        assert out.recovery["status"] == "degraded"   # NIE critical (z czystego ok)
+
+    def test_unreliable_rhr_trend_does_not_promote(self):
+        # R²=0.02 -> trend to szum, NIE ufać kierunkowi (nie podbija)
+        out = compute_full_readiness(
+            hrv_series=_series([45] * 8), rhr_series=_series([55] * 8),
+            sleep_hours_today=8.0,
+            acwr_result=_acwr(zone="optymalna", ratio=1.0),
+            temp_alert=_temp(), spo2_confirmed=False,
+            rhr_trend=self._rising_rhr(reliable=False, r2=0.02),
+        )
+        assert out.recovery["rhr_trend_warning"] is False
+        assert out.recovery["status"] == "ok"   # nie podbite
+
+    def test_stable_rhr_trend_does_not_promote(self):
+        # stabilny/spadający trend RHR -> brak ostrzeżenia
+        stable = TrendResult(slope=0.0, r_squared=0.9, direction="stabilny", reliable=True)
+        out = compute_full_readiness(
+            hrv_series=_series([45] * 8), rhr_series=_series([55] * 8),
+            sleep_hours_today=8.0,
+            acwr_result=_acwr(zone="optymalna", ratio=1.0),
+            temp_alert=_temp(), spo2_confirmed=False,
+            rhr_trend=stable,
+        )
+        assert out.recovery["rhr_trend_warning"] is False
+        assert out.recovery["status"] == "ok"
+
+    def test_rising_rhr_with_high_load_gives_orange_not_red(self):
+        # rosnący trend RHR (pojedyncza oznaka) + wysoki load -> ORANGE (nie red,
+        # bo to sygnał ostrzegawczy, nie silne oznaki)
+        out = compute_full_readiness(
+            hrv_series=_series([45] * 8), rhr_series=_series([55] * 8),
+            sleep_hours_today=8.0,
+            acwr_result=_acwr(zone="optymalna", ratio=1.0),
+            temp_alert=_temp(), spo2_confirmed=False, cardio_7d_sessions=3,
+            rhr_trend=self._rising_rhr(),
+        )
+        assert out.load["status"] in ("high", "very_high")
+        assert out.recovery["status"] == "degraded"   # z trendu RHR
+        assert out.verdict["zone"] == "orange"          # nie red

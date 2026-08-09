@@ -17,7 +17,7 @@ from .acwr import (
     acwr_readiness_modifier,
     build_gap_override_message,
 )
-from .baseline import MetricPoint, compute_ewma_baseline, compute_trend_slope
+from .baseline import MetricPoint, TrendResult, compute_ewma_baseline, compute_trend_slope
 from .config import settings
 from .exceptions import MissingBaselineError
 from .logging import get_logger
@@ -108,12 +108,23 @@ def _cardio_7d_penalty(sessions_7d: int) -> int:
     return 0
 
 
-def classify_recovery(base: int, hard_override_significant: bool) -> dict:
+def classify_recovery(
+    base: int,
+    hard_override_significant: bool,
+    rhr_trend: "TrendResult | None" = None,
+) -> dict:
     """Oś RECOVERY: czy organizm pokazuje oznaki pogorszenia regeneracji.
 
-    Opiera się na sumie punktów HRV+RHR+sen (`base`) — im wyżej, tym gorzej
-    regeneracyjnie — oraz na twardym override z temperatury (znacząca = zawsze
-    critical). Status: ok | degraded | critical.
+    Składowe:
+      - base (HRV+RHR+sen deviation) — główny sygnał;
+      - hard_override z temperatury (znacząca) -> critical zawsze;
+      - rhr_trend (faza 6.2c): ROSNĄCY, wiarygodny trend RHR to sygnał
+        OSTRZEGAWCZY (RHR rośnie od snu/stresu/odwodnienia/infekcji/alkoholu/
+        pory pomiaru — nie diagnoza przeciążenia). Podbija recovery o jeden
+        poziom: ok -> degraded, degraded -> critical, ale nigdy nie tworzy
+        critical z czystego „ok" (to tylko sygnał, nie diagnoza).
+
+    Status: ok | degraded | critical.
     """
     if hard_override_significant:
         status = "critical"
@@ -123,10 +134,23 @@ def classify_recovery(base: int, hard_override_significant: bool) -> dict:
         status = "degraded"
     else:                                             # 4+ pkt -> silne oznaki
         status = "critical"
+
+    # RHR trend jako sygnał ostrzegawczy (faza 6.2c)
+    rhr_warning = bool(
+        rhr_trend is not None
+        and rhr_trend.reliable
+        and rhr_trend.direction == "rosnący"
+    )
+    if rhr_warning and status == "ok":
+        status = "degraded"      # tylko podbicie o poziom, nie do critical
+    elif rhr_warning and status == "degraded":
+        status = "critical"
+
     return {
         "status": status,
-        "base_score": base,   # punkt wyjścia (HRV+RHR+sen)
+        "base_score": base,
         "hard_override_significant": hard_override_significant,
+        "rhr_trend_warning": rhr_warning,   # jawny sygnał ostrzegawczy
     }
 
 
@@ -249,6 +273,7 @@ def compute_full_readiness(
     cardio_7d_sessions: int = 0,
     gap: GapInfo | None = None,
     rpe_coverage_pct: float | None = None,
+    rhr_trend: TrendResult | None = None,
 ) -> ReadinessOutput:
 
     hrv_baseline = compute_ewma_baseline(hrv_series)
@@ -314,7 +339,7 @@ def compute_full_readiness(
     # osie i verdict to dodatkowa, nadrzędna interpretacja dla warstwy LLM.
     hard_override_significant = bool(hard_override and temp_alert.severity == "znacząca")
 
-    recovery = classify_recovery(base, hard_override_significant)
+    recovery = classify_recovery(base, hard_override_significant, rhr_trend)
     load = classify_load(acwr_penalty)
 
     # cardio ACWR w strefie „niewystarczające dane" = nie karze, ale obniża

@@ -13,6 +13,7 @@ from analytics.fetch_hevy import (
     _parse_date,
     build_daily_load_series,
     cardio_session_daily_load,
+    compute_volume_breakdown,
     workout_daily_load,
 )
 
@@ -109,3 +110,56 @@ class TestBuildDailyLoadSeries:
         w = _workout(None, [_set(100, 5, rpe=8)])
         series = build_daily_load_series([w], start, e)
         assert all(s.load == 0.0 for s in series)  # nic nie trafiło na dziś
+
+
+class TestComputeVolumeBreakdown:
+    """Faza 6.3: rozbicie wolumenu (working tonnage vs RPE-weighted volume)."""
+
+    def test_working_vs_rpe_weighted(self):
+        # seria 100kg x 5 z RPE 8: tonaż roboczy 500, RPE-weighted 4000
+        w = _workout("2026-08-09T10:00:00Z", [_set(100, 5, rpe=8)])
+        b = compute_volume_breakdown([w])
+        assert b["working_tonnage"] == 500
+        assert b["rpe_weighted_volume"] == 4000
+        assert b["working_sets"] == 1
+        assert b["rpe_coverage_pct"] == 100.0
+        assert b["rpe_weighted_reliable"] is True
+
+    def test_warmup_excluded_from_working(self):
+        # rozgrzewka wchodzi do warmup_tonnage, NIE do working
+        w = _workout("2026-08-09T10:00:00Z", [
+            _set(60, 5, rpe=None, type_="warmup"),
+            _set(100, 5, rpe=8),
+        ])
+        b = compute_volume_breakdown([w])
+        assert b["warmup_tonnage"] == 300
+        assert b["working_tonnage"] == 500
+        assert b["working_sets"] == 1
+
+    def test_missing_rpe_lowers_coverage_and_reliability(self):
+        # 1 z 2 serii ma RPE -> coverage 50% -> rpe_weighted_reliable False
+        w = _workout("2026-08-09T10:00:00Z", [
+            _set(100, 5, rpe=8),
+            _set(80, 5),   # bez RPE
+        ])
+        b = compute_volume_breakdown([w])
+        assert b["rpe_coverage_pct"] == 50.0
+        assert b["rpe_weighted_reliable"] is False
+
+    def test_empty_workouts(self):
+        b = compute_volume_breakdown([])
+        assert b["working_tonnage"] == 0.0
+        assert b["working_sets"] == 0
+        assert b["rpe_coverage_pct"] == 0.0
+        assert b["rpe_weighted_reliable"] is False
+
+    def test_bad_sets_skipped(self):
+        # serie bez reps/ciężaru pomijane (odporne na uszkodzone dane)
+        w = _workout("2026-08-09T10:00:00Z", [
+            _set(None, 5),
+            _set(100, None),
+            _set(100, 5, rpe=7),
+        ])
+        b = compute_volume_breakdown([w])
+        assert b["working_sets"] == 1
+        assert b["working_tonnage"] == 500

@@ -83,6 +83,18 @@ def _serialize_trend(trend: Any, sample_conf: dict | None) -> dict | None:
     return d
 
 
+def _volume_breakdown(hevy_workouts: list) -> dict | None:
+    """Rozbicie wolumenu treningowego (faza 6.3) dla acwr_detail.
+
+    Leniwa delegacja do fetch_hevy.compute_volume_breakdown (unika zależności
+    na górze pliku). Zwraca None, gdy brak treningów do analizy.
+    """
+    if not hevy_workouts:
+        return None
+    from .fetch_hevy import compute_volume_breakdown
+    return compute_volume_breakdown(hevy_workouts)
+
+
 @dataclass
 class PipelineContext:
     """Dane przenoszone między stage'ami pipeline'u."""
@@ -309,6 +321,7 @@ def serialization_stage(ctx: PipelineContext) -> PipelineContext:
             "acute_7d": ctx.acwr_info["acute"],
             "chronic_28d_ewma": ctx.acwr_info["chronic"],
             "rpe_coverage": ctx.acwr_info["rpe_coverage"],
+            "volume_breakdown": _volume_breakdown(ctx.hevy_workouts),
             "cardio": ctx.acwr_info.get("cardio_detail"),
             "gap": (asdict(ctx.acwr_info["gap"]) if ctx.acwr_info.get("gap") is not None else None),
             "daily_loads_last14": [

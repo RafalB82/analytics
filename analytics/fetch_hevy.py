@@ -206,6 +206,66 @@ def rpe_coverage(workouts: list[dict]) -> dict:
     return {"total_working": total, "with_rpe": with_rpe, "coverage_pct": coverage}
 
 
+def compute_volume_breakdown(workouts: list[dict]) -> dict:
+    """Rozbicie wolumenu treningowego (faza 6.3) dla warstwy interpretacyjnej.
+
+    Sedno z review: sam tonaż jest SŁABYM wskaźnikiem zmęczenia (10k kg z
+    przysiadów vs 10k kg z lateral raise to zupełnie inne obciążenie
+    fizjologiczne). RPE-weighted volume (tonaż × RPE) normalizuje ciężar przez
+    subiektywny wysiłek i jest znacznie bardziej „trenersko" istotne.
+
+    Liczy, bez zmiany scoringu (scoring nadal używa sRPE-load przez
+    `_set_load`/`compute_session_load`):
+      - working_tonnage: suma tonażu serii ROBOCZYCH (non-warmup), bez RPE
+      - rpe_weighted_volume: suma tonaż×RPE dla serii z RPE
+      - rpe_coverage_pct / rpe_weighted_reliable: gdy pokrycie RPE niskie,
+        RPE-weighted jest mniej wiarygodny (nie nadinterpretować)
+      - warmup_tonnage: dla kontekstu (rozgrzewki nie wchodzą do obciążenia roboczego)
+
+    Zwraca dict gotowy do raportu (acwr_detail.volume_breakdown).
+    """
+    working_tonnage = 0.0
+    rpe_weighted = 0.0
+    warmup_tonnage = 0.0
+    working_sets = 0
+    with_rpe = 0
+
+    for w in workouts:
+        for ex in w.get("exercises", []):
+            for s in ex.get("sets", []):
+                wt = s.get("weight")
+                reps = s.get("reps")
+                if wt is None or reps is None or wt == 0:
+                    continue
+                try:
+                    wt_f = float(wt)
+                    reps_f = int(reps)
+                except (TypeError, ValueError):
+                    continue
+                if wt_f <= 0 or reps_f <= 0 or wt_f > 1000 or reps_f > 1000:
+                    continue
+                tonnage = wt_f * reps_f
+                if s.get("type") in SKIP_SET_TYPES:
+                    warmup_tonnage += tonnage
+                    continue
+                working_tonnage += tonnage
+                working_sets += 1
+                rpe = s.get("rpe")
+                if rpe is not None:
+                    rpe_weighted += tonnage * float(rpe)
+                    with_rpe += 1
+
+    coverage = round(with_rpe / working_sets * 100, 1) if working_sets else 0.0
+    return {
+        "working_tonnage": round(working_tonnage, 0),
+        "rpe_weighted_volume": round(rpe_weighted, 0),
+        "warmup_tonnage": round(warmup_tonnage, 0),
+        "working_sets": working_sets,
+        "rpe_coverage_pct": coverage,
+        "rpe_weighted_reliable": coverage >= 80.0,  # próg pokrycia RPE
+    }
+
+
 def fetch_workouts_impl(
     get_workouts_callable,
     pages: int = 10,

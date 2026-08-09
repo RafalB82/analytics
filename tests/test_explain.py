@@ -1,7 +1,7 @@
 """Testy Explainability Layer (faza 9.0)."""
 from __future__ import annotations
 
-from analytics.explain import build_explanations
+from analytics.explain import _acwr_penalty_reasons, build_explanations
 
 
 def _full_payload():
@@ -72,3 +72,60 @@ class TestBuildExplanations:
         p["trend_note"] = "HRV w trendzie spadkowym"
         ex = build_explanations(**p)
         assert any("trendzie spadkowym" in r for r in ex["hrv"])
+
+    # --- eksplanacja źródła kary ACWR (sekcja 6.1 review) ---
+
+    def test_penalty_section_present(self):
+        ex = build_explanations(**_full_payload())
+        assert "acwr_penalty" in ex
+        assert ex["acwr_penalty"]
+
+    def test_underload_does_not_penalize(self):
+        # ACWR 0.77 (niedociążenie) => kara 0, ratio NIE karze
+        reasons = _acwr_penalty_reasons(
+            acwr_penalty=0,
+            acwr={"zone": "niedociążenie", "ratio": 0.77},
+            rpe_coverage={"coverage_pct": 66.9},
+            cardio_7d_sessions=0,
+        )
+        joined = " ".join(reasons)
+        assert "0.77" in joined
+        assert "NIE karze" in joined or "nie karze" in joined.lower()
+        assert "Łączna kara obciążenia: 0" in joined
+
+    def test_penalty_explained_from_cardio_7d_not_ratio(self):
+        # kara +2 pochodzi z 3 mocnych sesji cardio w 7d, NIE z ratio
+        reasons = _acwr_penalty_reasons(
+            acwr_penalty=2,
+            acwr={"zone": "niedociążenie", "ratio": 0.77},
+            rpe_coverage={"coverage_pct": 66.9},
+            cardio_7d_sessions=3,
+        )
+        joined = " ".join(reasons)
+        assert "NIE karze" in joined or "nie karze" in joined.lower()
+        assert "+2" in joined
+        assert "3 mocnych sesji cardio" in joined
+        assert "Łączna kara obciążenia: +2" in joined
+
+    def test_no_cardio_no_penalty(self):
+        reasons = _acwr_penalty_reasons(
+            acwr_penalty=0,
+            acwr={"zone": "optymalna", "ratio": 1.1},
+            rpe_coverage=None,
+            cardio_7d_sessions=0,
+        )
+        joined = " ".join(reasons)
+        assert "brak mocnych sesji" in joined
+        assert "Łączna kara obciążenia: 0" in joined
+
+    def test_unreliable_cardio_ratio_shows_zero(self):
+        # ACWR cardio „niewystarczające dane" nie karze (guard próbki)
+        reasons = _acwr_penalty_reasons(
+            acwr_penalty=0,
+            acwr={"zone": "niewystarczające dane", "ratio": 2.76},
+            rpe_coverage=None,
+            cardio_7d_sessions=0,
+        )
+        joined = " ".join(reasons)
+        assert "niewystarczające dane" in joined
+        assert "Łączna kara obciążenia: 0" in joined

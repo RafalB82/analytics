@@ -244,6 +244,9 @@ def explain_stage(ctx: PipelineContext) -> PipelineContext:
         temperature=temp_mod.serialize_temp_output(ctx.temp_alert, m["temp_series"], ctx.target),
         goal=ctx.goal_info,
         gap=asdict(gap_info) if gap_info is not None else None,
+        acwr_penalty=getattr(ctx.readiness, "acwr_penalty", 0),
+        cardio_7d_sessions=(ctx.acwr_info.get("cardio_detail") or {}).get("cardio_7d_sessions", 0),
+        cardio_7d=ctx.acwr_info.get("cardio_detail"),
     )
     return ctx
 

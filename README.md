@@ -1,4 +1,3 @@
-Poniżej masz kompletną, poprawioną wersję README, z prawidłowym rozdzieleniem **MFP = spożycie kcal** oraz **Apple Health = referencyjna masa ciała**, z uwzględnieniem planowanej synchronizacji Renpho → Apple Health/HealthKit. Poprawiłem też kilka drobnych niespójności w poprzedniej wersji, żeby README nie dokumentowało przypadkiem czegoś, czego kod nie robi. Człowiek kontra własna dokumentacja, odwieczna walka.
 
 # Analytics
 

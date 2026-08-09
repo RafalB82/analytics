@@ -109,7 +109,9 @@ def run(payload: dict) -> dict[str, Any]:
         # Serializacja przez Pydantic (model_dump mode=json) + _json_safe na wszelki
         # wypadek gdyby zagnieżdżone wartości numpy przeszły przez dict-y (np. ACWR).
         out = cast(dict[str, Any], _json_safe(ctx.report.model_dump(mode="json")))
-        logger.info("analiza OK dla %s (strefa %s)", target, readiness.zone)
+        logger.info("analiza OK dla %s (zone legacy=%s, verdict=%s)",
+                    target, readiness.zone,
+                    (readiness.verdict or {}).get("zone"))
         return out
 
     except InsufficientDataError as e:

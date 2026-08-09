@@ -120,12 +120,14 @@ python -m analytics.run_analysis '<json>'  # ręczny orchestrator
 
 ### Wyjście JSON
 
-Sekcje (z `AnalysisReport`, Pydantic v2): `readiness` (strefa/RPE/objętość),
-`acwr` (acute/chronic/ratio/zone), `acwr_detail` (acute_7d, chronic_28d_ewma,
-rpe_coverage, cardio + `cardio_7d_sessions`, daily_loads_last14), `temperature`,
-`nutrition` (cel kaloryczny z aktywności), `energy_balance` (wydatek vs zjedzone
-kcal — ryzyko niedoboru), `baseline_trends` (HRV/RHR trend + R²), `inputs`
-(ile punktów użyto) — plus sekcje pomocnicze, obecne gdy dane wystarczają:
+Sekcje (z `AnalysisReport`, Pydantic v2): `readiness` (strefa/RPE/objętość +
+osie `recovery`/`load`/`data_quality` + werdykt `verdict`), `acwr`
+(acute/chronic/ratio/zone), `acwr_detail` (acute_7d, chronic_28d_ewma,
+rpe_coverage, cardio + `cardio_7d_sessions`, daily_loads_last14,
+`volume_breakdown`), `temperature`, `nutrition` (cel kaloryczny z aktywności),
+`energy_balance` (wydatek vs zjedzone kcal — ryzyko niedoboru + `data_quality`),
+`baseline_trends` (HRV/RHR trend + R² + `trend_confidence`/`sample_confidence`),
+`inputs` (ile punktów użyto) — plus sekcje pomocnicze, obecne gdy dane wystarczają:
 - `confidence` — Confidence Score per metryka (hrv/rhr/tdee/acwr): punkty, stabilność, okno
 - `weight_trend` — trend wagi (roll. median + slope), tylko gdy podano `mfp_weight`
 - `activity_stability` — zbiorcza zmienność aktywności (Stable / Moderately / Highly Variable)
@@ -133,6 +135,14 @@ kcal — ryzyko niedoboru), `baseline_trends` (HRV/RHR trend + R²), `inputs`
 
 `status`: `"ok"` / `"fallback"` (niewystarczające dane — `InsufficientDataError`) /
 `"error"` (uszkodzone dane wejściowe lub błąd walidacji).
+
+> **Strefa gotowości (faza 6.2b/10.4):** do rekomendacji strefy używaj
+> `readiness.verdict.zone` (`green`/`orange`/`red`) z `rationale` — jest
+> **nadrzędny** względem legacy `readiness.zone` (`zielona`/`żółta`/`czerwona`,
+> z sumy `total_score`). Legacy nie rozdziela obciążenia od regeneracji:
+> sam wysoki load bez oznak pogorszenia regeneracji daje `verdict=green`
+> („ostrożnie, nie czerwona strefa"). `verdict` jest liczony przez
+> `build_verdict()` z osi `recovery`/`load`.
 
 ## Ważne zachowania
 

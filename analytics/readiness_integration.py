@@ -31,7 +31,10 @@ class ReadinessOutput:
     base_score: int              # suma punktów HRV+RHR+sen (0-6, jak w oryginalnej logice)
     acwr_penalty: int            # 0-2, z modułu acwr
     total_score: int
-    zone: str                    # "zielona" | "żółta" | "czerwona"
+    # UWAGA (faza 6.2b/10.4): `zone` to legacy scoring (zielona/żółta/czerwona,
+    # z sumy total_score). Do REKOMENDACJI strefy używaj `verdict.zone` (green/
+    # orange/red) — jest NADRZĘDNY, bo nie miesza load z fatigue (patrz build_verdict).
+    zone: str                    # "zielona" | "żółta" | "czerwona" (legacy)
     max_rpe: str
     volume_note: str
     hard_override: str | None    # np. z temperatury — nadpisuje strefę niezależnie od total_score
@@ -206,6 +209,12 @@ def classify_data_quality(
 
 def build_verdict(recovery: dict, load: dict, hard_override: str | None) -> dict:
     """Werdykt: semantyka stref wg połączenia LOAD i RECOVERY (sedno review).
+
+    NADRZĘDNOŚĆ (faza 10.4): to pole jest rekomendowaną interpretacją strefy
+    dla warstwy LLM/prezentacji — NADRZĘDNE względem legacy `zone` (z sumy
+    total_score). Użyj `verdict.zone` (green/orange/red) do rekomendacji,
+    nie gołego `zone` (zielona/żółta/czerwona), bo legacy nie rozdziela
+    load od fatigue.
 
     Kluczowa zmiana względem starego `classify_zone(total_score)`: sam wysoki
     LOAD NIE wystarczy do czerwonej strefy. Czerwona wymaga jednocześnie

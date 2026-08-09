@@ -39,7 +39,7 @@ Dzięki temu wysoki poziom treningu nie jest automatycznie traktowany jako przem
 
 ```text
                          ┌─────────────────────┐
-                         │     Apple Health     │
+                         │    Apple Health     │
                          │                     │
                          │ HRV                 │
                          │ RHR                 │

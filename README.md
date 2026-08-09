@@ -21,24 +21,33 @@ MFP (zjedzone kalorie/jedzenie) ─────────┘
 | Sygnał | Źródło | Co liczy |
 |---|---|---|
 | HRV, RHR, sen | Apple MCP | rolowany baseline (EWMA), trend, scoring |
-| Tonaż + RPE | Hevy MCP | ACWR (acute:chronic workload ratio) |
-| Aktywność + waga | Apple MCP | **cel kaloryczny** (TDEE z aktywności + marża wg celu) |
+| Tonaż + RPE (siła) | Hevy MCP | ACWR siłowy (acute:chronic) |
+| Cardio (TRIMP) | Apple Watch | ACWR cardio (osobny, inna skala) |
+| Aktywność + waga | Apple MCP | **cel kaloryczny** (TDEE z aktywności + marża wg celu), białko |
 | Zjedzone kalorie | MFP MCP | rejestracja jedzenia (nie bierze udziału w TDEE) |
-| Temperatura nadgarstka | Apple MCP | twardy override strefy |
+| Trend wagi | MFP MCP (opcjonalne) | sekcja `weight_trend` (roll. median + slope) |
+| Temperatura nadgarstka | Apple MCP | twardy override strefy (+ SpO₂ jako wsparcie) |
 
 ## Struktura
 
-- `config/` — centralna konfiguracja (okna, alphy, progi, zakresy metryk)
-- `validators/` — walidacja metryk wejściowych (NaN/inf/zakres)
-- `exceptions.py`, `logging.py`, `models.py` — wyjątki domenowe, logowanie, modele Pydantic
+- `config/` — centralna konfiguracja (okna, alphy, progi, marże, zakresy metryk)
+- `validators/` — walidacja wejścia (`input.py`) i metryk (`metrics.py`, NaN/inf/zakres)
+- `exceptions.py`, `logging.py` — wyjątki domenowe, logowanie strukturalne
+- `models.py` — typowane modele danych (Pydantic v2)
+- `metrics.py` — centralny rejestr metryk (nazwa/jednostka/normalny zakres → raporty/LLM)
 - `baseline.py` — baseline EWMA + trend + detekcja przesunięcia normy
-- `acwr.py` — Acute:Chronic Workload Ratio (Gabbett 2016)
+- `acwr.py` — Acute:Chronic Workload Ratio (Gabbett 2016), osobno siła (Hevy) i cardio (Apple)
+- `apple_cardio.py` — klasyfikacja sesji cardio z Apple Watch + TRIMP
 - `energy_balance.py` — bilans wydatek vs zjedzone kcal (ryzyko urazu/infekcji)
-- `temperature.py` — alert temperatury nadgarstka (twardy override)
-- `nutrition_adaptive.py` — cel kaloryczny (TDEE z aktywności + marża wg celu) + białko
-- `readiness_integration.py` — finalny scoring + strefa
+- `temperature.py` — alert temperatury nadgarstka (twardy override) + potwierdzenie SpO₂
+- `nutrition_adaptive.py` — cel kaloryczny (TDEE z aktywności + marża wg celu), białko, trend wagi
+- `readiness_integration.py` — finalny scoring gotowości + strefa
+- `confidence.py` — Confidence Score per metryka (punkty, stabilność, okno)
+- `stability.py` — stabilność aktywności (Stable / Moderately / Highly Variable)
+- `explain.py` — warstwa wyjaśniająca: `reason[]` per metryka dla LLM
+- `pipeline.py` — orkiestracja (5 stage'ów: InputValidation → ModelBuilding → Analytics → Confidence/Explain → Serialization)
 - `fetch_*.py` — konwersja danych z MCP na serie analityczne
-- `run_analysis.py` — orchestrator (wejście JSON → wyjście JSON)
+- `run_analysis.py` — cienki CLI/orchestrator (wejście JSON → wyjście JSON)
 - `mcp_fetchers/` — warstwa POBIERANIA z MCP (Hevy/Apple/MFP) + konwersja formatu
   (patrz `mcp_fetchers/README.md` oraz `docs/ARCHITECTURE.md` — mapa warstw)
 - `tests/` — testy jednostkowe + integracyjne · `docs/` — dokumentacja
@@ -77,9 +86,14 @@ python -m analytics.run_analysis '<json>'  # ręczny orchestrator
   "mfp_daily_kcal": [ /* zjedzone kcal z MFP diary: {day, kcal} — dla energy_balance */
     {"day": "2026-08-06", "kcal": 2603.0}
   ],
+  "mfp_weight": [ /* opcjonalne, punkty wagi z MFP — tylko do trendu wagi */
+    {"date": "2026-08-07", "value": 71.2}
+  ],
   "params": {
     "phase": "utrzymanie",
-    "bodyweight_kg": 71.0
+    "bodyweight_kg": 71.0,
+    "tdee_current": 2260,            /* opcjonalne */
+    "target_trend_kg_per_week": 0.0  /* opcjonalne */
   }
 }
 ```
@@ -90,21 +104,35 @@ python -m analytics.run_analysis '<json>'  # ręczny orchestrator
 > odrzucane — siła pochodzi wyłącznie z Hevy (zero dubli). Oba ACWR łączone na poziomie
 > gotowości zestawem `acwr_combined_modifier` (maksimum stref).
 >
-> TRIMP: `hr_max` brane z danej sesji (`max_heart_rate_bpm`), gdy dostępne — pełniejszy obraz
-> pułapu osiągniętego w tej aktywności; `hr_rest` zawsze z configu (poranne spoczynkowe).
+> TRIMP: referencją intensywności jest peak HR z danej sesji (`max_heart_rate_bpm`), gdy
+> dostępne — pełniejszy obraz pułapu osiągniętego w tej aktywności; NIE jest to fizjologiczne
+> HRmax. Opcjonalny dolny limit punktu odniesienia (`ACWR.hr_reference_floor_bpm`, domyślnie
+> 170) zabezpiecza lekkie treningi przed zawyżeniem względnej intensywności. `hr_rest` zawsze
+> z configu (poranne spoczynkowe).
 > Klasyfikacja cardio ma czarną listę siłowych słów kluczowych z pierwszeństwem, więc custom
 > nazwa typu "Walking Lunges" nie zostanie błędnie uznana za cardio.
 
 > `phase` = aktualny cel: `utrzymanie` (marża 0) / `redukcja` (−15%) / `masa` (+10%).
 > `bodyweight_kg` opcjonalny (gdy brak punktu wagi z Apple w danym dniu).
+> `mfp_weight` (opcjonalne) służy **wyłącznie** do `weight_trend` — waga do białka/TDEE
+> wzięta jest z punktu kontrolnego `weight_body_mass` z Apple (`apple_daily`).
+> `source` musi być `"apple+hevy+mfp"` (jedyna dozwolona wartość).
 
 ### Wyjście JSON
 
-Sekcje: `readiness` (strefa/RPE/objętość), `acwr` (acute/chronic/ratio/zone),
-`acwr_detail.rpe_coverage` + `cardio` (osobny ACWR cardio + `cardio_7d_sessions`),
-`temperature`, `nutrition` (cel kaloryczny z aktywności), `energy_balance`
-(wydatek vs zjedzone kcal — ryzyko niedoboru), `baseline_trends` (HRV/RHR trend + R²),
-`inputs` (ile punktów użyto).
+Sekcje (z `AnalysisReport`, Pydantic v2): `readiness` (strefa/RPE/objętość),
+`acwr` (acute/chronic/ratio/zone), `acwr_detail` (acute_7d, chronic_28d_ewma,
+rpe_coverage, cardio + `cardio_7d_sessions`, daily_loads_last14), `temperature`,
+`nutrition` (cel kaloryczny z aktywności), `energy_balance` (wydatek vs zjedzone
+kcal — ryzyko niedoboru), `baseline_trends` (HRV/RHR trend + R²), `inputs`
+(ile punktów użyto) — plus sekcje pomocnicze, obecne gdy dane wystarczają:
+- `confidence` — Confidence Score per metryka (hrv/rhr/tdee/acwr): punkty, stabilność, okno
+- `weight_trend` — trend wagi (roll. median + slope), tylko gdy podano `mfp_weight`
+- `activity_stability` — zbiorcza zmienność aktywności (Stable / Moderately / Highly Variable)
+- `explanations` — `reason[]` per metryka (gotowe do interpretacji przez LLM)
+
+`status`: `"ok"` / `"fallback"` (niewystarczające dane — `InsufficientDataError`) /
+`"error"` (uszkodzone dane wejściowe lub błąd walidacji).
 
 ## Ważne zachowania
 
@@ -115,14 +143,20 @@ Sekcje: `readiness` (strefa/RPE/objętość), `acwr` (acute/chronic/ratio/zone),
   co zaniża chronic ACWR i zawyża ratio. **Sprawdzaj `rpe_coverage`** — przy
   <70% traktuj wynik ACWR ze sceptycyzmem.
 - **Temperatura** nadgarstka to osobne źródło (`apple__get_data(name=...wrist_temperature)`),
-  z poprzedniej nocy; alert ≥0.3°C od baseline, severity „znacząca" → twardy
-  override na strefę czerwoną.
+  z poprzedniej nocy; alert ≥0.3°C od baseline — „podwyższona” vs „znacząca” (przy
+  jednoczesnym spadku HRV lub odchyleniu ≥0.3°C×multiplier). „Znacząca” → twardy override
+  na strefę czerwoną (niezależnie od `total_score`). Dostępna jest też funkcja
+  `spo2_confirmation` jako drugi sygnał (spadek SpO₂ ≥2 pkt proc.) — w obecnym pipeline
+  przekazywana jest twardo jako `False` (konfiguracja po stronie warstwy zbierającej).
 - `run_analysis` wymaga min. 6 punktów HRV do baseline (EWMA).
 - **Cel kaloryczny z aktywności** (nie z MFP): TDEE = średnie basal+active z okna
-  (7d, docelowo 28d) z Apple; cel = TDEE + marża % wg `phase`. MFP rejestruje
-  jedzenie, ale nie wyznacza celu.
-- **Waga** to punkt kontrolny z Apple (w dni ważenia), nie trend — służy do
-  białka i kontekstu; bez niej cel kaloryczny i tak działa (z samej aktywności).
+- **Cel kaloryczny z aktywności** (nie z MFP): TDEE = średnie basal+active z okna
+  (aktywne 7d, porównawcze 28d) z Apple; cel = TDEE + marża % wg `phase`. MFP
+  rejestruje jedzenie, ale nie wyznacza celu.
+- **Waga — dwa niezależne źródła.** Punkt kontrolny z Apple (`weight_body_mass`, w dni
+  ważenia) służy do białka i TDEE; osobno `mfp_weight` (opcjonalne) służy wyłącznie do
+  `weight_trend` (rolling median + slope). Bez wagi z Apple cel kaloryczny i tak działa
+  (z samej aktywności); bez `mfp_weight` po prostu nie ma sekcji `weight_trend`.
 - **Cardio ACWR** przy nieregularnym cardio jest oznaczany „niewystarczające dane"
   (za mało dni w chronic), a realną karę gotowości niesie `cardio_7d_sessions`
   (ile mocnych sesji w tygodniu). Nie interpretuj ratio cardio jako ryzyka,
@@ -134,6 +168,5 @@ Sekcje: `readiness` (strefa/RPE/objętość), `acwr` (acute/chronic/ratio/zone),
 
 ## Jakość / CI
 
-- 113 testów, pokrycie 80%+ (algorytmy ~100%)
-- Ruff + mypy czyste; GitHub Actions na Python 3.10/3.12/3.13
-- Szczegóły refaktoru: `docs/Refactoring.md`
+- 249 testów (jednostkowe + integracyjne)
+- Ruff + mypy czyste; GitHub Actions: Ruff i mypy na 3.12, pytest+coverage na 3.10/3.12/3.13

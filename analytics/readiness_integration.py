@@ -11,7 +11,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .acwr import ACWRResult, acwr_readiness_modifier
+from .acwr import (
+    ACWRResult,
+    GapInfo,
+    acwr_readiness_modifier,
+    build_gap_override_message,
+)
 from .baseline import MetricPoint, compute_ewma_baseline, compute_trend_slope
 from .config import settings
 from .exceptions import MissingBaselineError
@@ -32,6 +37,7 @@ class ReadinessOutput:
     hard_override: str | None    # np. z temperatury — nadpisuje strefę niezależnie od total_score
     trend_note: str | None
     sleep_missing: bool            # True = brak danych o śnie (składnik snu pominięty w score)
+    gap_note: str | None            # ostrzeżenie o powrocie po luce treningowej (nie zmienia total_score)
 
 
 def score_hrv_rhr_sleep(
@@ -102,6 +108,7 @@ def compute_full_readiness(
     spo2_confirmed: bool,
     cardio_acwr: ACWRResult | None = None,
     cardio_7d_sessions: int = 0,
+    gap: GapInfo | None = None,
 ) -> ReadinessOutput:
 
     hrv_baseline = compute_ewma_baseline(hrv_series)
@@ -153,6 +160,14 @@ def compute_full_readiness(
         max_rpe = "RPE 7 lub regeneracja"
         volume_note = "objętość -30-40% (override: temperatura)"
 
+    # luka treningowa — OSTRZEŻENIE, nie modyfikator punktowy ani hard
+    # override strefy. ACWR ratio po przerwie zwykle pokazuje "niedociążenie"
+    # (matematycznie poprawne, fizjologicznie mylące — patrz GapInfo docstring),
+    # więc nie chcemy podnosić total_score na podstawie samej luki (brak
+    # podstaw ilościowych na konkretną liczbę punktów karnych). Zamiast tego:
+    # jawna notatka tekstowa dla LLM/warstwy wyżej, niezależnie od zone.
+    gap_note = build_gap_override_message(gap) if gap is not None else None
+
     return ReadinessOutput(
         base_score=base,
         acwr_penalty=acwr_penalty,
@@ -163,4 +178,5 @@ def compute_full_readiness(
         hard_override=hard_override,
         trend_note=trend_note,
         sleep_missing=sleep_hours_today is None,
+        gap_note=gap_note,
     )

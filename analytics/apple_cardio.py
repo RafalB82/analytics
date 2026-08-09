@@ -107,22 +107,37 @@ def compute_trimp_session_load(
     avg_hr: float,
     duration_minutes: float,
     hr_rest: float | None = None,
-    hr_max: float | None = None,
+    session_peak_hr: float | None = None,
+    hr_reference_floor: float | None = None,
 ) -> float:
     """
     TRIMP (training impulse) — obciążenie sesji cardio z tętna (Banister).
 
     TRIMP = czas(min) * wspólczynnik intensywności wyznaczony z rezerwy tętna.
     Stosowany standardowy model Banistera:
-      ratio = (HRavg - HRrest) / (HRmax - HRrest)
+      ratio = (HRavg - HRrest) / (reference_hr - HRrest)
       TRIMP = czas * ratio * 0.64 * e^(1.92 * ratio)
     Rekomendowany w literaturze do treningu wydolnościowego; w pełni
     automatyczny (bez ręcznego RPE).
 
+    SEMANTYKA punktu odniesienia (session-relative):
+    TRIMP wykorzystuje maksymalne tętno zaobserwowane podczas SESJI jako
+    punkt odniesienia intensywności. Nie jest ono traktowane jako fizjologiczne
+    HRmax użytkownika. Opcjonalny dolny limit punktu odniesienia
+    (hr_reference_floor) zabezpiecza przed zawyżeniem względnej intensywności
+    podczas lekkich treningów.
+
+      effective_reference_hr = max(session_peak_hr, hr_reference_floor)
+
     avg_hr: średnie tętno sesji (bpm)
     duration_minutes: czas trwania (min)
     hr_rest: tętno spoczynkowe (bpm) — default z configu (ACWR.hr_rest_default)
-    hr_max: maksymalne tętno (bpm) — default z configu (ACWR.hr_max_default)
+    session_peak_hr: maksymalne HR zaobserwowane podczas sesji (bpm) — default
+        z configu (ACWR.hr_peak_default)
+    hr_reference_floor: minimalny punkt odniesienia (bpm) do normalizacji;
+        None = brak dolnego limitu (domyślna metodologia: reference = peak HR
+        sesji). Wartość konfiguracyjną przekazuje wywołujący (patrz
+        apple_workout_daily_load / ACWR.hr_reference_floor_bpm).
 
     Zwraca TRIMP (min·wsp). Rząd wielkości: ~88-min rower @ 143bpm, rest 55,
     max 190 -> ok. 200-250. Osobna skala od tonażu (setki vs tysiące).
@@ -130,12 +145,20 @@ def compute_trimp_session_load(
     if duration_minutes <= 0:
         raise ValueError("duration_minutes musi być > 0")
     rest = hr_rest if hr_rest is not None else settings.ACWR.hr_rest_default
-    hmax = hr_max if hr_max is not None else settings.ACWR.hr_max_default
-    if hmax <= rest:
-        raise ValueError("hr_max musi być > hr_rest")
+    peak = session_peak_hr if session_peak_hr is not None else settings.ACWR.hr_peak_default
+    if session_peak_hr is not None and session_peak_hr < avg_hr:
+        # peak HR < avg HR to niespójne dane wejściowe — kontrolowany błąd.
+        raise ValueError("session_peak_hr musi być >= avg_hr")
+    if peak <= rest:
+        raise ValueError("session_peak_hr musi być > hr_rest")
+
+    # dolny limit punktu odniesienia — None oznacza brak limitu (pure function),
+    # wartość konfiguracyjną dostarcza wywołujący.
+    if hr_reference_floor is not None:
+        peak = max(peak, hr_reference_floor)
 
     # % rezerwy tętna (delta HR ratio, 0..1) — Banister TRIMP
-    ratio = 0.0 if avg_hr <= rest else (avg_hr - rest) / (hmax - rest)
+    ratio = 0.0 if avg_hr <= rest else (avg_hr - rest) / (peak - rest)
     ratio = max(0.0, min(ratio, 1.0))
 
     # standardowy TRIMP Banistera (nieliniowy, uwzględnia rosnący koszt
@@ -151,11 +174,14 @@ def apple_workout_daily_load(workout: dict) -> tuple[date, float] | None:
     Odrzuca workouty siłowe (patrz is_cardio_workout) oraz brakujące dane.
     Zwraca (day, trimp) lub None gdy nie cardio / brak avg_hr / czasu.
 
-    hr_max (mianownik Banistera) bierzemy z danej sesji treningowej
+    peak HR (mianownik Banistera) bierzemy z danej sesji treningowej
     (max_heart_rate_bpm), jeśli jest dostępny — pełniejszy, realny obraz
     pułapu osiągniętego w tej aktywności. Gdy brak, pada na config
-    (ACWRSettings.hr_max_default). hr_rest zawsze z configu (poranne
-    spoczynkowe — niezmienne per sesja).
+    (ACWRSettings.hr_peak_default). Punkt odniesienia to peak HR z SESJI,
+    NIE fizjologiczne HRmax — patrz compute_trimp_session_load. Opcjonalny
+    dolny limit (hr_reference_floor z configu) zabezpiecza lekkie treningi
+    przed zawyżeniem względnej intensywności. hr_rest zawsze z configu
+    (poranne spoczynkowe — niezmienne per sesja).
     """
     if not is_cardio_workout(workout):
         logger.debug("apple workout nie-cardio (pominięty): %s", workout.get("name"))
@@ -176,15 +202,21 @@ def apple_workout_daily_load(workout: dict) -> tuple[date, float] | None:
         return None
     if avg_hr_f <= 0 or duration_f <= 0:
         return None
-    # patologiczne max_hr (<= spoczynkowe) — odrzuć sesję, nie wywalaj pipeline
+    # max_hr ujemny/zerowy (artefakt) — odrzuć sesję, nie wywalaj pipeline.
+    # Uwaga: to tylko sanity-check na <= 0; właściwa walidacja peak <= rest
+    # siedzi wewnątrz compute_trimp_session_load (raise ValueError) i jest
+    # łapana przez except ValueError niżej.
     if max_hr_f is not None and max_hr_f <= 0:
         return None
 
     day = _parse_date(workout.get("start") or workout.get("startTime"))
     try:
-        trimp = compute_trimp_session_load(avg_hr_f, duration_f, hr_max=max_hr_f)
+        trimp = compute_trimp_session_load(
+            avg_hr_f, duration_f, session_peak_hr=max_hr_f,
+            hr_reference_floor=settings.ACWR.hr_reference_floor_bpm,
+        )
     except ValueError:
-        logger.debug("apple cardio: odrzucono sesję z niepoprawnym tętnem (max=%.1f)", max_hr_f)
+        logger.debug("apple cardio: odrzucono sesję z niepoprawnym tętnem (peak=%.1f)", max_hr_f)
         return None
     return day, round(trimp, 1)
 

@@ -50,27 +50,86 @@ class TestIsCardioWorkout:
 
 class TestComputeTrimp:
     def test_higher_hr_gives_higher_trimp(self):
-        lo = compute_trimp_session_load(120, 60, hr_rest=55, hr_max=190)
-        hi = compute_trimp_session_load(160, 60, hr_rest=55, hr_max=190)
+        lo = compute_trimp_session_load(120, 60, session_peak_hr=190)
+        hi = compute_trimp_session_load(160, 60, session_peak_hr=190)
         assert hi > lo
 
     def test_longer_session_gives_higher_trimp(self):
-        short = compute_trimp_session_load(140, 30, hr_rest=55, hr_max=190)
-        long_ = compute_trimp_session_load(140, 90, hr_rest=55, hr_max=190)
+        short = compute_trimp_session_load(140, 30, session_peak_hr=190)
+        long_ = compute_trimp_session_load(140, 90, session_peak_hr=190)
         assert long_ > short
 
     def test_zero_duration_raises(self):
         with pytest.raises(ValueError):
-            compute_trimp_session_load(140, 0, hr_rest=55, hr_max=190)
+            compute_trimp_session_load(140, 0, session_peak_hr=190)
 
-    def test_hr_max_leq_rest_raises(self):
+    def test_peak_leq_rest_raises(self):
         with pytest.raises(ValueError):
-            compute_trimp_session_load(140, 60, hr_rest=190, hr_max=190)
+            compute_trimp_session_load(140, 60, session_peak_hr=190, hr_rest=190)
 
     def test_typical_road_ride_magnitude(self):
         # 88-min rower @ 143 avg, rest 55, max 190 -> TRIMP rzędud setek (nie tysięcy)
-        trimp = compute_trimp_session_load(143, 88, hr_rest=55, hr_max=190)
+        trimp = compute_trimp_session_load(143, 88, session_peak_hr=190)
         assert 50 <= trimp <= 300
+
+
+class TestTrimpSessionRelative:
+    """Specyfikacja trimp.md — session-relative HR reference z dolnym limitem."""
+
+    def test_no_floor_uses_session_peak(self):
+        # bez floor (None) -> reference = session_peak_hr
+        # wymuszamy parametrem, żeby nie zależeć od configu
+        t = compute_trimp_session_load(
+            140, 60, session_peak_hr=180, hr_rest=55, hr_reference_floor=None,
+        )
+        assert 0 < t < 300
+
+    def test_peak_above_floor_uses_peak(self):
+        # peak 180 > floor 170 -> reference = 180 (bez wpływu floor)
+        a = compute_trimp_session_load(
+            150, 60, session_peak_hr=180, hr_rest=55, hr_reference_floor=170,
+        )
+        b = compute_trimp_session_load(
+            150, 60, session_peak_hr=180, hr_rest=55, hr_reference_floor=None,
+        )
+        assert a == b
+
+    def test_peak_below_floor_uses_floor(self):
+        # peak 140 < floor 170 -> reference = 170 -> niższy TRIMP niż bez floor
+        no_floor = compute_trimp_session_load(
+            125, 60, session_peak_hr=140, hr_rest=55, hr_reference_floor=None,
+        )
+        floored = compute_trimp_session_load(
+            125, 60, session_peak_hr=140, hr_rest=55, hr_reference_floor=170,
+        )
+        assert floored < no_floor  # lekka jazda mniej obciążona w normalizacji
+        assert floored > 0
+
+    def test_peak_equal_floor(self):
+        # peak == floor -> brak zmiany
+        a = compute_trimp_session_load(
+            150, 60, session_peak_hr=170, hr_rest=55, hr_reference_floor=170,
+        )
+        b = compute_trimp_session_load(
+            150, 60, session_peak_hr=170, hr_rest=55, hr_reference_floor=None,
+        )
+        assert a == b
+
+    def test_light_ride_not_inflated(self):
+        # lekka jazda: HRavg 125, peak 140, floor 170 -> niska względna intensywność
+        light = compute_trimp_session_load(
+            125, 60, session_peak_hr=140, hr_rest=55, hr_reference_floor=170,
+        )
+        # mocna jazda: HRavg 155, peak 182, floor 170 -> wyższe obciążenie
+        hard = compute_trimp_session_load(
+            155, 60, session_peak_hr=182, hr_rest=55, hr_reference_floor=170,
+        )
+        assert light < hard
+
+    def test_peak_below_avg_raises(self):
+        # peak HR < avg HR -> niespójne dane -> kontrolowany błąd
+        with pytest.raises(ValueError):
+            compute_trimp_session_load(160, 60, session_peak_hr=140, hr_rest=55)
 
 
 class TestAppleWorkoutDailyLoad:
@@ -93,8 +152,8 @@ class TestAppleWorkoutDailyLoad:
         # Wyższy max sesji => niższy TRIMP (mniejsza frakcja HRmax przy tym samym avg).
         import analytics.apple_cardio as ac
         base_avg = 143.5
-        high_max = ac.compute_trimp_session_load(base_avg, 88.2, hr_max=190)
-        low_max = ac.compute_trimp_session_load(base_avg, 88.2, hr_max=170)  # sesja ma max=170
+        high_max = ac.compute_trimp_session_load(base_avg, 88.2, session_peak_hr=190)
+        low_max = ac.compute_trimp_session_load(base_avg, 88.2, session_peak_hr=170)  # sesja ma max=170
         assert low_max > high_max  # mniejszy mianownik => większy TRIMP
         # przez apple_workout_daily_load z max sesji 170
         day, load = apple_workout_daily_load(

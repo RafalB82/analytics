@@ -293,6 +293,17 @@ def compute_weight_trend(
     )
 
 
+@dataclass
+class TDEEAdjustment:
+    """(Rezerwa) wynik korekty TDEE z trendu wagi."""
+
+    old_tdee: float
+    new_tdee: float
+    weekly_trend_kg: float
+    adjustment_kcal: float
+    confidence: str
+
+
 def adjust_tdee(
     current_tdee: float,
     weight_trend_kg_per_day: float | None,
@@ -323,17 +334,6 @@ def adjust_tdee(
         weekly_trend_kg=round(weekly, 3), adjustment_kcal=round(adj, 0),
         confidence=confidence,
     )
-
-
-@dataclass
-class TDEEAdjustment:
-    """(Rezerwa) wynik korekty TDEE z trendu wagi."""
-
-    old_tdee: float
-    new_tdee: float
-    weekly_trend_kg: float
-    adjustment_kcal: float
-    confidence: str
 
 
 def compute_protein_target(

@@ -1,7 +1,7 @@
 """pipeline.py — Analytics Pipeline (faza 7.0).
 
 Jawna orkiestracja analizy jako sekwencji stage'ów zamiast jednej wielkiej
-funkcji. Cele (wg roadmapy 2.0 / docs/Refactoring.md):
+funkcji. Cele:
   - czystsza orkiestracja (InputValidation -> ModelBuilding -> Analytics
     -> Confidence -> Serialization -> Report)
   - łatwiejsze testy integracyjne (każdy stage testowalny osobno)
@@ -111,6 +111,7 @@ def analytics_stage(ctx: PipelineContext) -> PipelineContext:
         cardio_7d_sessions=(ctx.acwr_info.get("cardio_detail") or {}).get("cardio_7d_sessions", 0),
         temp_alert=ctx.temp_alert,
         spo2_confirmed=False,
+        gap=ctx.acwr_info.get("gap"),
     )
     ctx.goal_info = nutr_mod.build_goal_output(m["energy_series"], m["weight_info"], ctx.params)
 
@@ -202,6 +203,7 @@ def explain_stage(ctx: PipelineContext) -> PipelineContext:
     rpe_cov = ctx.acwr_info.get("rpe_coverage")
     assert ctx.target is not None
 
+    gap_info = ctx.acwr_info.get("gap")
     ctx.explanations = explain_mod.build_explanations(
         hrv_deviation_pct=hrv_dev,
         rhr_deviation_bpm=rhr_dev,
@@ -212,6 +214,7 @@ def explain_stage(ctx: PipelineContext) -> PipelineContext:
         rpe_coverage=rpe_cov,
         temperature=temp_mod.serialize_temp_output(ctx.temp_alert, m["temp_series"], ctx.target),
         goal=ctx.goal_info,
+        gap=asdict(gap_info) if gap_info is not None else None,
     )
     return ctx
 
@@ -233,6 +236,7 @@ def serialization_stage(ctx: PipelineContext) -> PipelineContext:
             "chronic_28d_ewma": ctx.acwr_info["chronic"],
             "rpe_coverage": ctx.acwr_info["rpe_coverage"],
             "cardio": ctx.acwr_info.get("cardio_detail"),
+            "gap": (asdict(ctx.acwr_info["gap"]) if ctx.acwr_info.get("gap") is not None else None),
             "daily_loads_last14": [
                 {"day": str(d.day), "load": d.load}
                 for d in ctx.acwr_info["daily_loads"][-14:]

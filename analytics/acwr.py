@@ -43,6 +43,26 @@ class ACWRResult:
     zone: str                  # "niedociążenie" | "optymalna" | "podwyższone ryzyko" | "wysokie ryzyko"
 
 
+@dataclass
+class GapInfo:
+    """Wykryta luka treningowa (detraining) — kończąca się w dniu target.
+
+    Niezależna od ACWR ratio: ratio po powrocie z przerwy typowo pokazuje
+    "niedociążenie" (acute niskie, bo mało dni treningowych w oknie 7d),
+    co jest matematycznie poprawne, ale fizjologicznie mylące — pierwszy
+    trening po dłuższej przerwie to często NAJWYŻSZE ryzyko (utrata
+    tolerancji tkanki na obciążenie), nie najniższe. Acute:chronic ratio
+    tego efektu nie modeluje (Gabbett 2016; krytyka: Impellizzeri i wsp.
+    2020) — stąd osobna flaga zamiast liczenia na to, że ratio go złapie.
+    """
+
+    detected: bool
+    gap_days: int               # dni bez treningu bezpośrednio przed target (0 = brak luki)
+    severity: str                # "brak" | "krótka" | "długa"
+    last_training_day: date | None   # ostatni dzień z load>0 przed target (None = brak historii)
+    resuming_today: bool         # target sam jest dniem treningowym (load>0) po luce
+
+
 def compute_session_load(
     sets: int,
     reps: int,
@@ -84,6 +104,104 @@ def fill_missing_days(daily_loads: dict[date, float], start: date, end: date) ->
     return result
 
 
+def detect_training_gap(
+    daily_series: list[SessionLoad],
+    target: date,
+    min_gap_days: int | None = None,
+    long_gap_days: int | None = None,
+) -> GapInfo:
+    """
+    Wykrywa lukę treningową (dni bez treningu z rzędu) bezpośrednio przed
+    `target`, niezależnie od tego, co pokazuje ACWR ratio.
+
+    daily_series musi być PEŁNYM szeregiem dziennym (patrz fill_missing_days) —
+    ciągłym, bez dziur w kalendarzu, gdzie dni bez treningu mają load=0.0.
+    Bez tego założenia nie da się odróżnić "dzień odpoczynku" od "brakuje
+    wpisu w danych", więc ta funkcja NIE odgaduje nic poza to, co widać
+    wprost w przekazanym oknie (tak samo jak compute_chronic_load — patrz
+    komentarz COLD-START FIX o tym samym ograniczeniu).
+
+    Liczy dni wstecz od (target - 1 dzień), bo target sam może być dniem
+    treningowym (`resuming_today`) — luka to to, co było PRZED nim.
+
+    min_gap_days: próg do uznania przerwy za wykrytą (domyślnie
+    ACWR.gap_min_days = 7 — mniej niż tydzień to normalna przerwa
+    międzytreningowa, nie detraining).
+    long_gap_days: próg "długiej" luki (domyślnie ACWR.gap_long_days = 14)
+    — ostrzejsza kategoria dla komunikatu/override.
+
+    Zwraca GapInfo(detected=False, gap_days=0, severity="brak", ...) gdy
+    luka krótsza niż min_gap_days albo gdy brak historii w ogóle.
+    """
+    if min_gap_days is None:
+        min_gap_days = settings.ACWR.gap_min_days
+    if long_gap_days is None:
+        long_gap_days = settings.ACWR.gap_long_days
+
+    if not daily_series:
+        return GapInfo(detected=False, gap_days=0, severity="brak",
+                        last_training_day=None, resuming_today=False)
+
+    by_day = {p.day: p.load for p in daily_series}
+    resuming_today = by_day.get(target, 0.0) > 0.0
+
+    # dni wstecz od target-1: licz zera aż do pierwszego dnia treningowego
+    # (load>0) albo do końca dostępnej historii
+    gap_days = 0
+    last_training_day: date | None = None
+    cursor = target - timedelta(days=1)
+    earliest = daily_series[0].day
+    while cursor >= earliest:
+        load = by_day.get(cursor, 0.0)
+        if load > 0.0:
+            last_training_day = cursor
+            break
+        gap_days += 1
+        cursor -= timedelta(days=1)
+    else:
+        # pętla wyczerpała się bez break -> cała dostępna historia to same
+        # zera; nie wiadomo, co było wcześniej (poza zasięgiem danych) —
+        # nie raportujemy luki na podstawie samego braku danych (patrz
+        # docstring: to samo ograniczenie co w compute_chronic_load)
+        gap_days = 0
+        last_training_day = None
+
+    if gap_days < min_gap_days or last_training_day is None:
+        return GapInfo(detected=False, gap_days=gap_days if last_training_day else 0,
+                        severity="brak", last_training_day=last_training_day,
+                        resuming_today=resuming_today)
+
+    severity = "długa" if gap_days >= long_gap_days else "krótka"
+    return GapInfo(detected=True, gap_days=gap_days, severity=severity,
+                    last_training_day=last_training_day, resuming_today=resuming_today)
+
+
+def build_gap_override_message(gap: GapInfo) -> str | None:
+    """
+    Komunikat dla warstwy deterministycznej (analogicznie do
+    temperature.build_temp_override_message) — treść i próg decyzji
+    siedzi tutaj, LLM tylko formatuje.
+
+    Ostrzega tylko gdy `resuming_today=True` (dziś jest pierwszy powrót
+    po luce) — jeśli target sam nie jest dniem treningowym, nie ma
+    czego ostrzegać "dzisiaj" (flaga i tak trafia do inputs/explain jako
+    kontekst historyczny).
+    """
+    if not gap.detected or not gap.resuming_today:
+        return None
+    if gap.severity == "długa":
+        return (
+            f"UWAGA: pierwszy trening po {gap.gap_days} dniach przerwy. "
+            f"ACWR ratio może pokazywać „niedociążenie\" (mało dni w oknie 7d) — "
+            f"to nie znaczy bezpiecznie. Tolerancja tkanki na obciążenie spadła; "
+            f"rozważ redukcję objętości/intensywności niezależnie od strefy ACWR."
+        )
+    return (
+        f"Powrót po {gap.gap_days} dniach przerwy. Traktuj dzisiejszy trening "
+        f"ostrożniej niż sugeruje sama strefa ACWR."
+    )
+
+
 def compute_acute_load(daily_series: list[SessionLoad], window: int | None = None) -> float:
     """Średnia dzienna z ostatnich `window` dni (nie suma — łatwiej interpretować i porównywać z chronic)."""
     if window is None:
@@ -106,6 +224,27 @@ def compute_chronic_load(
     use_ewma=True (zalecane): EWMA zamiast prostego rolling mean —
     unika gwałtownych skoków przy "wypadaniu" starego dnia z okna,
     co jest znaną wadą prostego rolling average w oryginalnej metodzie.
+
+    COLD-START FIX: EWMA inicjalizowana pojedynczym punktem (`values[0]`)
+    nadaje pierwszemu dniu okna wagę nieproporcjonalnie dużą względem
+    `alpha` (przy alpha=0.05 ten punkt "waży" znacznie więcej niż powinien
+    jeszcze po 20+ krokach rekurencji) — wynik ratio potrafi wtedy zależeć
+    od TEGO, który konkretny dzień (trening czy odpoczynek) wypadł jako
+    pierwszy w oknie, a nie od faktycznego rozkładu obciążenia.
+
+    Rozważaliśmy rozgrzewkę EWMA na danych SPRZED okna (margines
+    ACWR_LOOKBACK_DAYS > chronic_window w build_acwr) — odrzucone: fill_missing_days
+    zeruje zarówno prawdziwe dni odpoczynkowe, jak i dni poza faktycznym
+    zasięgiem historii treningowej użytkownika, i na poziomie SessionLoad
+    nie da się tych dwóch przypadków odróżnić. Branie zer "spoza zasięgu
+    danych" jako sygnału odpoczynku zaniżałoby chronic tak samo błędnie,
+    jak cold-start zawyżał go wcześniej (patrz test_returns_full_structure -
+    28 dni realnego treningu, ale margines przed nimi to same zera
+    "brak danych", nie realny wypoczynek).
+
+    Zamiast tego: seed EWMA to średnia z CAŁEGO właściwego okna (nie sam
+    pierwszy punkt) — usuwa zależność wyniku od pozycji pierwszego dnia
+    treningowego w oknie, bez ryzykownego zgadywania co jest poza oknem.
     """
     if window is None:
         window = settings.ACWR.chronic_window
@@ -113,6 +252,7 @@ def compute_chronic_load(
         use_ewma = settings.ACWR.chronic_use_ewma
     if alpha is None:
         alpha = settings.ACWR.chronic_alpha
+
     recent = daily_series[-window:]
     if not recent:
         return 0.0
@@ -121,8 +261,12 @@ def compute_chronic_load(
     if not use_ewma:
         return round(float(np.mean(values)), 1)
 
-    ewma = values[0]
-    for v in values[1:]:
+    # seed = średnia całego okna (nie tylko pierwszy punkt) -> wynik nie
+    # zależy od tego, czy okno akurat zaczyna się dniem treningowym czy
+    # odpoczynkowym; EWMA wciąż "dojeżdża" przez pełne `values`, więc
+    # nowsze dni nadal mają większą wagę zgodnie z alpha
+    ewma = float(np.mean(values))
+    for v in values:
         ewma = alpha * v + (1 - alpha) * ewma
     return round(float(ewma), 1)
 
@@ -254,10 +398,12 @@ def build_acwr(
                                    use_ewma=settings.ACWR.chronic_use_ewma)
     acwr_res = acwr_ratio(acute, chronic)
     rpe_cov = rpe_coverage(hevy_workouts)
+    gap_strength = detect_training_gap(daily_loads, target)
 
     # --- CARDIO (Apple Watch) ---
     cardio_res = None
     cardio_detail = None
+    gap_cardio = None
     if apple_workouts:
         from .apple_cardio import build_apple_cardio_series
         cardio_series = build_apple_cardio_series(apple_workouts, start, target)
@@ -270,6 +416,7 @@ def build_acwr(
         cardio_7d = sum(s.load for s in cardio_series if s.day >= acute_start)
         cardio_7d_sessions = sum(1 for s in cardio_series
                                  if s.day >= acute_start and s.load > 0)
+        gap_cardio = detect_training_gap(cardio_series, target)
         cardio_detail = {
             "acute": cardio_res.acute_load,
             "chronic": cardio_res.chronic_load,
@@ -280,15 +427,30 @@ def build_acwr(
             "cardio_7d_sessions": cardio_7d_sessions,     # ile mocnych sesji w 7d
         }
 
-    logger.info("ACWR siła: ratio=%.2f (%s), pokrycie RPE=%.1f%% | cardio: %s",
+    # luka łączona: bierz tor, który faktycznie wykrył przerwę i akurat dziś
+    # wznawia (resuming_today) — jeśli oba wznawiają, dłuższa luka wygrywa
+    # (poważniejszy sygnał ostrożności). Gdy żaden nie wznawia dziś, ale
+    # jeden wykrył lukę w historii, ten trafia do outputu jako kontekst.
+    gap = gap_strength
+    if gap_cardio is not None:
+        both_resuming = gap_strength.resuming_today and gap_cardio.resuming_today
+        if both_resuming:
+            gap = gap_strength if gap_strength.gap_days >= gap_cardio.gap_days else gap_cardio
+        elif gap_cardio.resuming_today and not gap_strength.resuming_today:
+            gap = gap_cardio
+        # domyślnie (gap_strength.resuming_today lub żaden) zostaje gap_strength
+
+    logger.info("ACWR siła: ratio=%.2f (%s), pokrycie RPE=%.1f%% | cardio: %s | gap: %s",
                 acwr_res.ratio, acwr_res.zone, rpe_cov["coverage_pct"],
-                cardio_res.ratio if cardio_res else "brak")
+                cardio_res.ratio if cardio_res else "brak",
+                f"{gap.gap_days}d ({gap.severity})" if gap.detected else "brak")
     result = {
         "result": acwr_res,
         "acute": acute,
         "chronic": chronic,
         "rpe_coverage": rpe_cov,
         "daily_loads": daily_loads,
+        "gap": gap,
     }
     if cardio_res is not None:
         result["cardio"] = cardio_res

@@ -96,6 +96,33 @@ class TestLatestWeight:
         daily = [_day("2026-08-01")]
         assert latest_weight(daily)["present"] is False
 
+    def test_out_of_range_weight_raises(self):
+        """AUDYT fix: literówka (710 zamiast 71.0) nie może cicho przejść do
+        compute_protein_target/TDEE — musi rzucić, spójnie z to_hrv_series
+        (test_hrv_invalid_raises) i fetch_mfp.to_weight_series
+        (test_invalid_weight_raises), które już tak się zachowują dla
+        analogicznych uszkodzonych wartości."""
+        daily = [_day("2026-08-07", weight_body_mass=710.0)]
+        with pytest.raises(InvalidMetricError):
+            latest_weight(daily)
+
+    def test_most_recent_weight_on_descending_input(self):
+        """PIERWOTNY BUG: API zwraca dni w kolejności malejącej (najnowszy
+        pierwszy — dziś, wczoraj, przedwczoraj...). Stary kod opierał się na
+        samym reversed(daily) bez sortowania, więc taką listę odwracał od
+        NAJSTARSZEGO dnia i zwracał nieaktualny punkt wagi. Jawny sorted(...)
+        na wejściu (jak w reszcie modułu) musi wybrać naprawdę ostatni dzień
+        z ważeniem niezależnie od kolejności wejściowej."""
+        daily = [
+            _day("2026-08-07", weight_body_mass=71.0, body_fat_percentage=15.1),
+            _day("2026-08-06", weight_body_mass=None),
+            _day("2026-08-05", weight_body_mass=70.5, body_fat_percentage=15.5),
+        ]
+        w = latest_weight(daily)
+        assert w["present"] is True
+        assert w["date"] == "2026-08-07"
+        assert w["weight_kg"] == 71.0
+
 
 class TestTempSeries:
     def test_to_temp_series_from_points(self):

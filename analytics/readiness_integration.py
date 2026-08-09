@@ -39,6 +39,15 @@ class ReadinessOutput:
     sleep_missing: bool            # True = brak danych o śnie (składnik snu pominięty w score)
     gap_note: str | None            # ostrzeżenie o powrocie po luce treningowej (nie zmienia total_score)
 
+    # --- nowe: osie (faza 6.2b, additive — nie zmieniają powyższych pól) ---
+    # Rozdzielenie LOAD (obciążenie treningowe) od RECOVERY (regeneracja/zmęczenie)
+    # oraz DATA_QUALITY (wiarygodność). To realizuje postulat: sam „duży load"
+    # bez oznak pogorszenia regeneracji NIE jest „czerwoną strefą".
+    recovery: dict | None = None      # {status: ok|degraded|critical, signals:{...}}
+    load: dict | None = None          # {status: low|moderate|high|very_high, components:[...]}
+    data_quality: dict | None = None  # {status: high|medium|low, notes:[...]}
+    verdict: dict | None = None       # {zone: green|orange|red|inconclusive, max_rpe, advice, rationale}
+
 
 def score_hrv_rhr_sleep(
     hrv_deviation_pct: float,
@@ -99,6 +108,136 @@ def _cardio_7d_penalty(sessions_7d: int) -> int:
     return 0
 
 
+def classify_recovery(base: int, hard_override_significant: bool) -> dict:
+    """Oś RECOVERY: czy organizm pokazuje oznaki pogorszenia regeneracji.
+
+    Opiera się na sumie punktów HRV+RHR+sen (`base`) — im wyżej, tym gorzej
+    regeneracyjnie — oraz na twardym override z temperatury (znacząca = zawsze
+    critical). Status: ok | degraded | critical.
+    """
+    if hard_override_significant:
+        status = "critical"
+    elif base <= settings.READINESS.zone_green_max:   # 0-1 pkt -> brak oznak
+        status = "ok"
+    elif base <= settings.READINESS.zone_yellow_max:  # 2-3 pkt -> pojedyncze oznaki
+        status = "degraded"
+    else:                                             # 4+ pkt -> silne oznaki
+        status = "critical"
+    return {
+        "status": status,
+        "base_score": base,   # punkt wyjścia (HRV+RHR+sen)
+        "hard_override_significant": hard_override_significant,
+    }
+
+
+def classify_load(acwr_penalty: int) -> dict:
+    """Oś LOAD: obciążenie treningowe (bodźce), niezależnie od regeneracji.
+
+    Opiera się na sumarycznej karze obciążenia (`acwr_penalty` — siła ratio
+    + cardio 7d). Status: low | moderate | high | very_high.
+    ZA UWAGĘ: LOAD to obciążenie, RECOVERY to zmęczenie. Wysoki LOAD bez
+    osłabionej RECOVERY NIE jest sygnałem czerwonym — rozstrzyga werdykt.
+    """
+    if acwr_penalty <= 0:
+        status = "low"
+    elif acwr_penalty == 1:
+        status = "high"
+    else:  # 2+
+        status = "very_high"
+    return {
+        "status": status,
+        "acwr_penalty": acwr_penalty,
+    }
+
+
+def classify_data_quality(
+    sleep_missing: bool,
+    cardio_insufficient: bool,
+    rpe_coverage_pct: float | None = None,
+) -> dict:
+    """Oś DATA_QUALITY: wiarygodność oceny.
+
+    Składowe:
+      - brak snu (sleep_missing) -> obniża,
+      - cardio ACWR niewystarczające (za mało dni) -> obniża (ratio niemożliwe),
+      - niskie pokrycie RPE -> obniża (sRPE-load mniej wiarygodny).
+    Status: high | medium | low.
+    """
+    notes: list[str] = []
+    if sleep_missing:
+        notes.append("Brak danych o śnie — ocena regeneracji niepełna")
+    if cardio_insufficient:
+        notes.append("ACWR cardio niewystarczające dane (za mało dni) — ratio niekarzące, diagnostyczne")
+    if rpe_coverage_pct is not None and rpe_coverage_pct < 80:
+        notes.append(f"Pokrycie RPE ({rpe_coverage_pct:.0f}%) niskie — sRPE-load mniej wiarygodny")
+
+    if not notes:
+        status = "high"
+    elif len(notes) == 1:
+        status = "medium"
+    else:
+        status = "low"
+    return {"status": status, "notes": notes}
+
+
+def build_verdict(recovery: dict, load: dict, hard_override: str | None) -> dict:
+    """Werdykt: semantyka stref wg połączenia LOAD i RECOVERY (sedno review).
+
+    Kluczowa zmiana względem starego `classify_zone(total_score)`: sam wysoki
+    LOAD NIE wystarczy do czerwonej strefy. Czerwona wymaga jednocześnie
+    wysokiego obciążenia ORAZ silnych oznak pogorszenia regeneracji.
+
+    - LOAD niski -> green (gotowy), niezależnie od recovery.
+    - LOAD wysoki + RECOVERY ok  -> green z notą „duże obciążenie, ale bez
+      oznak problemu" (to realizuje Twoją tabelkę: 🟢 duże obciążenie,
+      organizm nie pokazuje oznak problemu).
+    - LOAD wysoki + RECOVERY degraded -> orange (duże obciążenie + pojedyncze
+      oznaki pogorszenia).
+    - LOAD wysoki + RECOVERY critical -> red (duże obciążenie + silne oznaki).
+    - hard_override (znacząca temperatura) -> red, niezależnie od osi.
+    """
+    if hard_override:
+        return {
+            "zone": "red",
+            "max_rpe": "RPE 7 lub regeneracja",
+            "advice": "objętość -30-40% (override: temperatura)",
+            "rationale": "Twardy override z temperatury nadgarstka (znacząca) — niezależnie od osi LOAD/RECOVERY.",
+        }
+
+    load_status = load["status"]
+    rec_status = recovery["status"]
+
+    if load_status in ("low", "moderate"):
+        return {
+            "zone": "green",
+            "max_rpe": "RPE 9 ostatnia seria / 8 reszta",
+            "advice": "pełna objętość",
+            "rationale": f"Obciążenie {load_status}, regeneracja {rec_status} — brak podstaw do ograniczeń.",
+        }
+
+    if rec_status == "ok":
+        return {
+            "zone": "green",
+            "max_rpe": "RPE 8 wszędzie",
+            "advice": "bez zmian objętości, ale obserwuj",
+            "rationale": "Wysokie obciążenie, ale organizm nie pokazuje oznak pogorszenia regeneracji — ostrożność, nie czerwona strefa.",
+        }
+    if rec_status == "degraded":
+        return {
+            "zone": "orange",
+            "max_rpe": "max RPE 8 wszędzie",
+            "advice": "ogranicz objętość o ~30%, RPE ≤ 8",
+            "rationale": "Wysokie obciążenie + pojedyncze oznaki pogorszenia regeneracji (HRV/RHR/sen/temperatura).",
+        }
+    # rec_status == critical
+    return {
+        "zone": "red",
+        "max_rpe": "max RPE 7 lub regeneracja",
+        "advice": "objętość -30-40%, RPE ≤ 7",
+        "rationale": "Wysokie obciążenie + silne oznaki pogorszenia regeneracji.",
+    }
+
+
 def compute_full_readiness(
     hrv_series: list[MetricPoint],
     rhr_series: list[MetricPoint],
@@ -109,6 +248,7 @@ def compute_full_readiness(
     cardio_acwr: ACWRResult | None = None,
     cardio_7d_sessions: int = 0,
     gap: GapInfo | None = None,
+    rpe_coverage_pct: float | None = None,
 ) -> ReadinessOutput:
 
     hrv_baseline = compute_ewma_baseline(hrv_series)
@@ -168,6 +308,29 @@ def compute_full_readiness(
     # jawna notatka tekstowa dla LLM/warstwy wyżej, niezależnie od zone.
     gap_note = build_gap_override_message(gap) if gap is not None else None
 
+    # --- nowe osie (faza 6.2b, additive) ---
+    # Rozdzielenie LOAD od RECOVERY + DATA_QUALITY + werdykt semantyczny.
+    # Istniejący scoring (base/acwr_penalty/total/zone) zostaje BEZ ZMIAN —
+    # osie i verdict to dodatkowa, nadrzędna interpretacja dla warstwy LLM.
+    hard_override_significant = bool(hard_override and temp_alert.severity == "znacząca")
+
+    recovery = classify_recovery(base, hard_override_significant)
+    load = classify_load(acwr_penalty)
+
+    # cardio ACWR w strefie „niewystarczające dane" = nie karze, ale obniża
+    # wiarygodność oceny obciążenia cardio
+    cardio_insufficient = bool(
+        cardio_acwr is not None
+        and cardio_acwr.zone in (settings.ACWR.zone_insufficient, "")
+    )
+    data_quality = classify_data_quality(
+        sleep_missing=sleep_hours_today is None,
+        cardio_insufficient=cardio_insufficient,
+        rpe_coverage_pct=rpe_coverage_pct,
+    )
+
+    verdict = build_verdict(recovery, load, hard_override)
+
     return ReadinessOutput(
         base_score=base,
         acwr_penalty=acwr_penalty,
@@ -179,4 +342,8 @@ def compute_full_readiness(
         trend_note=trend_note,
         sleep_missing=sleep_hours_today is None,
         gap_note=gap_note,
+        recovery=recovery,
+        load=load,
+        data_quality=data_quality,
+        verdict=verdict,
     )

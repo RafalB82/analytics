@@ -162,6 +162,7 @@ def analytics_stage(ctx: PipelineContext) -> PipelineContext:
         temp_alert=ctx.temp_alert,
         spo2_confirmed=False,
         gap=ctx.acwr_info.get("gap"),
+        rpe_coverage_pct=(ctx.acwr_info.get("rpe_coverage") or {}).get("coverage_pct"),
     )
     ctx.goal_info = nutr_mod.build_goal_output(m["energy_series"], m["weight_info"], ctx.params)
 

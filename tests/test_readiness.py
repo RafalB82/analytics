@@ -206,3 +206,116 @@ class TestComputeFullReadiness:
         assert out_without_gap.acwr_penalty == out_with_gap.acwr_penalty
         assert out_without_gap.gap_note is None
         assert out_with_gap.gap_note is not None
+
+
+class TestAxesAndVerdict:
+    """Faza 6.2b: osie RECOVERY/LOAD/DATA_QUALITY + werdykt (sekcja 6.2 review).
+
+    Sedno: sam wysoki LOAD bez oznak pogorszenia regeneracji NIE jest czerwoną
+    strefą. Czerwona wymaga loadu ORAZ recovery critical. To realizuje rozdzielenie
+    load (obciążenie) od fatigue (zmęczenie).
+    """
+
+    def _readiness(self, *, acwr_zone="optymalna", acwr_ratio=1.0,
+                   cardio_7d_sessions=0, temp=None, sleep=None, rpe_cov=None):
+        common = dict(
+            hrv_series=_series([45] * 8),
+            rhr_series=_series([55] * 8),
+            sleep_hours_today=sleep,
+            acwr_result=_acwr(zone=acwr_zone, ratio=acwr_ratio),
+            temp_alert=temp or _temp(),
+            spo2_confirmed=False,
+            cardio_7d_sessions=cardio_7d_sessions,
+            rpe_coverage_pct=rpe_cov,
+        )
+        return compute_full_readiness(**common)
+
+    def test_axes_present_and_old_fields_kept(self):
+        out = self._readiness()
+        # stare pola wciąż są
+        assert hasattr(out, "base_score") and hasattr(out, "acwr_penalty")
+        assert hasattr(out, "total_score") and hasattr(out, "zone")
+        # nowe osie
+        assert out.recovery is not None
+        assert out.load is not None
+        assert out.data_quality is not None
+        assert out.verdict is not None
+        assert "status" in out.recovery and "status" in out.load
+        assert "status" in out.data_quality
+        assert "zone" in out.verdict
+
+    def test_high_load_ok_recovery_is_green_not_red(self):
+        # kluczowe z review: wysoki load (kara obciążenia) + recovery ok -> GREEN
+        # (duże obciążenie, ale organizm NIE pokazuje oznak problemu)
+        # Wymuszamy wysoki load przez cardio_7d_sessions=3 (kara +2) przy dobrym
+        # baseline regeneracyjnym (base=0).
+        out = self._readiness(cardio_7d_sessions=3)
+        assert out.acwr_penalty >= 2          # load faktycznie wysoki
+        assert out.load["status"] in ("high", "very_high")
+        assert out.verdict["zone"] == "green"   # NIE czerwona mimo loadu!
+        assert "nie pokazuje oznak" in out.verdict["rationale"]
+
+    def test_high_load_degraded_recovery_is_orange(self):
+        # wysoki load + pojedyncze oznaki pogorszenia -> ORANGE
+        # (delikatny spadek HRV -> base 2 -> degraded; plus wysoki load z cardio)
+        hrv_series = _series([45] * 7 + [30])   # ostatni dzień mocno w dół -> base 2
+        rhr_series = _series([55] * 8)
+        out2 = compute_full_readiness(
+            hrv_series=hrv_series, rhr_series=rhr_series, sleep_hours_today=8.0,
+            acwr_result=_acwr(zone="optymalna", ratio=1.0),
+            temp_alert=_temp(), spo2_confirmed=False, cardio_7d_sessions=3,
+        )
+        assert out2.recovery["status"] == "degraded"
+        assert out2.load["status"] in ("high", "very_high")
+        assert out2.verdict["zone"] == "orange"
+
+    def test_high_load_critical_recovery_is_red(self):
+        # wysoki load + silne oznaki pogorszenia -> RED
+        hrv_series = _series([45] * 6 + [30, 28])   # mocny spadek HRV -> base 2+
+        rhr_series = _series([55] * 6 + [62, 64])   # wzrost RHR -> base +
+        out = compute_full_readiness(
+            hrv_series=hrv_series, rhr_series=rhr_series, sleep_hours_today=8.0,
+            acwr_result=_acwr(zone="optymalna", ratio=1.0),
+            temp_alert=_temp(), spo2_confirmed=False, cardio_7d_sessions=3,
+        )
+        assert out.recovery["status"] == "critical"
+        assert out.verdict["zone"] == "red"
+
+    def test_low_load_green_even_if_recovery_degraded(self):
+        # niski load -> green, nawet gdy regeneracja pogorszona (brak bodźców =
+        # brak ostrych ograniczeń; to inny sygnał niż przeciążenie)
+        hrv_series = _series([45] * 6 + [30, 28])
+        rhr_series = _series([55] * 6 + [62, 64])
+        out = compute_full_readiness(
+            hrv_series=hrv_series, rhr_series=rhr_series, sleep_hours_today=8.0,
+            acwr_result=_acwr(zone="niedociążenie", ratio=0.7),
+            temp_alert=_temp(), spo2_confirmed=False, cardio_7d_sessions=0,
+        )
+        assert out.load["status"] == "low"
+        assert out.verdict["zone"] == "green"
+
+    def test_hard_override_forces_verdict_red(self):
+        temp = TempAlert(triggered=True, deviation_c=0.6, baseline_c=36.0,
+                         severity="znacząca", combined_with_hrv_drop=False)
+        out = self._readiness(temp=temp)
+        assert out.verdict["zone"] == "red"
+        assert "override" in out.verdict["rationale"]
+
+    def test_data_quality_flags(self):
+        # brak snu + cardio niewystarczające -> nisza wiarygodność
+        out = compute_full_readiness(
+            hrv_series=_series([45] * 8), rhr_series=_series([55] * 8),
+            sleep_hours_today=None,   # brak snu
+            acwr_result=_acwr(zone="optymalna", ratio=1.0),
+            cardio_acwr=_acwr(zone="niewystarczające dane", ratio=2.76),
+            temp_alert=_temp(), spo2_confirmed=False,
+            rpe_coverage_pct=66.9,
+        )
+        assert out.data_quality["status"] == "low"
+        joined = " ".join(out.data_quality["notes"])
+        assert "śnie" in joined or "snu" in joined
+        assert "niewystarczające" in joined
+
+    def test_data_quality_high_when_clean(self):
+        out = self._readiness(sleep=8.0, rpe_cov=100.0)
+        assert out.data_quality["status"] == "high"

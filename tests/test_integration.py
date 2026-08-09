@@ -175,6 +175,27 @@ class TestRunEndToEnd:
         result = run(_payload(apple_daily=_mk_apple(n_days=4)))
         assert result["status"] == "fallback"
 
+    def test_baseline_trends_has_confidence_breakdown(self):
+        # sekcja 6.2a: rozbicie confidence (trend vs próbka) w baseline_trends
+        result = run(_payload())
+        bt = result["baseline_trends"]
+        for metric, label in (("hrv", "hrv"), ("rhr", "rhr")):
+            t = bt.get(metric)
+            assert t is not None, f"brak trendu {metric}"
+            # oryginalne pola zachowane (wsteczna kompatybilność)
+            assert "slope" in t and "r_squared" in t and "direction" in t and "reliable" in t
+            # nowe rozbicie confidence
+            assert "trend_confidence" in t, f"brak trend_confidence dla {metric}"
+            assert "trend_reliable" in t
+            assert t["trend_confidence"] in ("High", "Low", "brak danych")
+            assert t["trend_reliable"] == t["reliable"]
+            # sample_confidence: albo dict (gdy confidence policzone), albo None
+            assert "sample_confidence" in t
+            sc = t["sample_confidence"]
+            if sc is not None:
+                assert "label" in sc
+                assert sc["label"] in ("High", "Medium", "Low")
+
 
 class TestParseInput:
     def test_valid_json(self):

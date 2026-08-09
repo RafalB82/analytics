@@ -241,3 +241,43 @@ def test_pipeline_does_not_import_run_analysis():
                 raise AssertionError(
                     f"{target} importuje run_analysis ({module}) — cykl!"
                 )
+
+
+# --- sekcja 6.2a: rozbicie confidence (trend vs próbka) ---------------------
+
+from analytics.baseline import TrendResult
+from analytics.pipeline import _trend_confidence_label, _serialize_trend
+
+
+class TestTrendConfidenceBreakdown:
+    def test_label_high_when_reliable(self):
+        assert _trend_confidence_label(True, 0.9) == "High"
+
+    def test_label_low_when_unreliable(self):
+        # R²=0.02 -> trend to szum, niezależnie od liczby punktów próbki
+        assert _trend_confidence_label(False, 0.02) == "Low"
+
+    def test_label_brak_danych_when_none(self):
+        assert _trend_confidence_label(None, None) == "brak danych"
+
+    def test_serialize_trend_none(self):
+        assert _serialize_trend(None, {}) is None
+
+    def test_serialize_trend_adds_breakdown(self):
+        t = TrendResult(slope=0.15, r_squared=0.02, direction="stabilny", reliable=False)
+        d = _serialize_trend(t, {"label": "High", "score": 95})
+        # oryginalne pola zachowane
+        assert d["slope"] == 0.15 and d["r_squared"] == 0.02
+        assert d["reliable"] is False
+        # rozbicie
+        assert d["trend_confidence"] == "Low"     # trend szumny (R²=0.02)
+        assert d["trend_reliable"] is False
+        assert d["sample_confidence"] == {"label": "High", "score": 95}  # próbka dobra
+
+    def test_serialize_trend_high_trend_high_sample(self):
+        # poprawny przypadek: i trend wiarygodny, i próbka bogata
+        t = TrendResult(slope=0.3, r_squared=0.9, direction="rosnący", reliable=True)
+        d = _serialize_trend(t, {"label": "High", "score": 90})
+        assert d["trend_confidence"] == "High"
+        assert d["trend_reliable"] is True
+        assert d["sample_confidence"]["label"] == "High"

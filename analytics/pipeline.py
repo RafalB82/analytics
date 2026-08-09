@@ -44,6 +44,45 @@ def _dow_label(d: date) -> str:
     return _PL_DOW.get(d.weekday(), "?")
 
 
+def _trend_confidence_label(reliable: bool, r_squared: float | None) -> str:
+    """Etykieta WIARYGODNOŚCI TRENDU (nie próbki).
+
+    Rozdziela dwie rzeczy, które łatwo pomylić (sekcja 6.2a review):
+      - „High confidence" (z ConfidenceScore) mówi o ilości/kompletności PRÓBKI
+        (dużo punktów, mało luk) — ale NIE o tym, czy TREND jest wiarygodny.
+      - R² trendu (z compute_trend_slope) mówi, ile wariancji wyjaśnia linia —
+        przy R²=0.02 trend jest szumem, niezależnie od liczby punktów.
+
+    Tu zwracamy etykietę dla TRENDU:
+      - reliable=True -> „High" (linia dobrze opisuje dane),
+      - reliable=False -> „Low" (trend szumny/niepewny — nie ufać kierunkowi),
+      - brak trendu (None) -> „brak danych".
+    """
+    if reliable is None:
+        return "brak danych"
+    return "High" if reliable else "Low"
+
+
+def _serialize_trend(trend: Any, sample_conf: dict | None) -> dict | None:
+    """Serializuje TrendResult + jawne rozbicie confidence (trend vs próbka).
+
+    Wstecznie kompatybilne: zachowuje oryginalne pola (slope, r_squared,
+    direction, reliable) i DODAJE rozbicie, żeby etykieta „High" nie była
+    mylnie interpretowana jako „wiarygodny trend" gdy R² jest niski.
+    """
+    if trend is None:
+        return None
+    d = asdict(trend)
+    d["trend_confidence"] = _trend_confidence_label(
+        trend.reliable, trend.r_squared
+    )
+    # jawny alias wiarygodności trendu (reliable już jest, ale czytelnie w rozbiciu)
+    d["trend_reliable"] = bool(trend.reliable)
+    # pewność PRÓBKI (ilość/kompletność danych) — może być High przy Low trendu
+    d["sample_confidence"] = sample_conf
+    return d
+
+
 @dataclass
 class PipelineContext:
     """Dane przenoszone między stage'ami pipeline'u."""
@@ -278,8 +317,8 @@ def serialization_stage(ctx: PipelineContext) -> PipelineContext:
         nutrition=ctx.goal_info,
         energy_balance=ctx.energy_balance or None,
         baseline_trends={
-            "hrv": (asdict(ctx.trend_hrv) if ctx.trend_hrv else None),
-            "rhr": (asdict(ctx.trend_rhr) if ctx.trend_rhr else None),
+            "hrv": _serialize_trend(ctx.trend_hrv, (ctx.confidence or {}).get("hrv")),
+            "rhr": _serialize_trend(ctx.trend_rhr, (ctx.confidence or {}).get("rhr")),
         },
         confidence=ctx.confidence or None,
         weight_trend=ctx.weight_trend,

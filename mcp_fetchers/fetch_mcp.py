@@ -7,11 +7,16 @@ analizy gotowości. Zaprojektowany tak, żeby działał jako job cron BEZ agenta
 DLACZEGO ISTNIEJE (zastępuje ręczne "agent woła MCP i wkleja JSON"):
   MCP serwery są osiągalne programistycznie:
     - Apple MCP: HTTP streamable na http://127.0.0.1:8766/mcp (mcp_server.py --http)
-    - Hevy MCP:  subprocess stdio `node standalone.mjs` (HEVY_API_KEY z env) —
-                 NIE ma portu HTTP w bieżącej instancji, więc skrypt odpala
-                 własny, izolowany proces stdio i prowadzi JSON-RPC handshake.
+    - Hevy MCP:  HTTP streamable na http://127.0.0.1:3000/mcp (hevy-mcp.service)
+                 — serwer long-running na loopbacku, bez startu subprocesu per-run.
+                 Fallback (jeśli HTTP niedostępny → connection refused): subprocess
+                 stdio `node standalone.mjs` (HEVY_API_KEY z env) z izolowanym
+                 procesem i JSON-RPC handshake.
   Dzięki temu pipeline agenta (ręczne pobieranie + wklejanie) zmienia się w
   czysty: `python3 -m mcp_fetchers.fetch_mcp --target YYYY-MM-DD`.
+
+FIRST RUN: Apple MCP ok (HTTP). Hevy domyślnie przez HTTP (hevy-mcp.service na
+3000); stdio tylko jako fallback, gdy serwer nie odpowiada.
 
 ARCHITEKTURA (zgodna z README/mcp_fetchers):
   Ta warstwa = "pobieranie przez MCP". Wykorzystuje istniejące *_normalize.py
@@ -21,8 +26,6 @@ ARCHITEKTURA (zgodna z README/mcp_fetchers):
 Użycie:
   python3 -m mcp_fetchers.fetch_mcp --target 2026-08-09 [--out /tmp/r.json]
   python3 -m mcp_fetchers.fetch_mcp                      # domyślnie dziś
-
-FIRST RUN: Apple MCP ok (HTTP). Hevy startuje stdio -> ~2-4s handshake.
 """
 from __future__ import annotations
 
@@ -46,6 +49,9 @@ APPLE_MCP_URL = os.environ.get("APPLE_MCP_URL", "http://127.0.0.1:8766/mcp")
 MFP_MCP_URL = os.environ.get("MFP_MCP_URL", "http://localhost:8000/mcp")
 HEVY_BIN = os.environ.get("HEVY_BIN", "/home/rafal/hevy-mcp/packages/node/dist/standalone.mjs")
 HEVY_API_KEY = os.environ.get("HEVY_API_KEY", "")
+# Hevy MCP przez streamable HTTP (hevy-mcp.service na loopbacku, port 3000).
+# Domyślny transport; stdio (HEVY_BIN) tylko jako fallback, gdy serwer nie odpowiada.
+HEVY_MCP_URL = os.environ.get("HEVY_MCP_URL", "http://127.0.0.1:3000/mcp")
 ACWR_LOOKBACK_DAYS = 35  # okno chronic ACWR (jak w analytics.acwr)
 # MFP: okno do bilansu energetycznego — energy_balance używa 7d, więc pobieramy
 # 7 + zapas 5 = 12 dni, żeby pokryć niepełne/mocno niskokaloryczne dni przy
@@ -217,10 +223,12 @@ def make_workout_clickable_name(w: dict) -> str:
     return f"{w.get('start_time','')[:10]} {w.get('title','')}"
 
 
-def fetch_hevy(client: McpStdioClient, target: str,
+def fetch_hevy(client, target: str,
                 lookback_days: int = ACWR_LOOKBACK_DAYS) -> list:
     """Pobiera workouty Hevy (lista) + szczegóły (exercises/sets) z okna
-    [target-lookback, target]. Zwraca surowe workouty w formacie MCP."""
+    [target-lookback, target]. Zwraca surowe workouty w formacie MCP.
+    client: McpHttpClient (HTTP) lub McpStdioClient (fallback stdio) — oba mają
+    call_tool o tej samej sygnaturze, więc ciało jest wspólne."""
     from datetime import date, timedelta
     window_start = (date.fromisoformat(target) - timedelta(days=lookback_days)).isoformat()
 
@@ -349,20 +357,33 @@ def main() -> int:
     if args.only_cardio:
         args.skip_hevy = True
 
-    # ---- Hevy (stdio) ----
+    # ---- Hevy (HTTP streamable; fallback: stdio) ----
     if not args.skip_hevy:
-        print("[fetch_mcp] łączę się z Hevy (stdio)...", file=sys.stderr)
-        if not HEVY_API_KEY:
-            print("ERROR: brak HEVY_API_KEY w env", file=sys.stderr)
-            return 2
-        h = McpStdioClient(HEVY_BIN, HEVY_API_KEY)
-        try:
+        # Domyślnie HTTP (hevy-mcp.service na 127.0.0.1:3000). Jeśli serwer nie
+        # odpowiada (connection refused), wróć do stdio z izolowanym procesem.
+        h = None
+        if HEVY_MCP_URL:
+            try:
+                print(f"[fetch_mcp] łączę się z Hevy (HTTP {HEVY_MCP_URL})...", file=sys.stderr)
+                h = McpHttpClient(HEVY_MCP_URL)
+                h.initialize()
+            except Exception as e:
+                print(f"[fetch_mcp] Hevy HTTP niedostępny ({e}); fallback do stdio", file=sys.stderr)
+                h = None
+        if h is None:
+            if not HEVY_API_KEY:
+                print("ERROR: brak HEVY_API_KEY w env (i HEVY_MCP_URL nie odpowiada)", file=sys.stderr)
+                return 2
+            print("[fetch_mcp] łączę się z Hevy (fallback stdio)...", file=sys.stderr)
+            h = McpStdioClient(HEVY_BIN, HEVY_API_KEY)
             h.initialize()
+        try:
             raw_hevy = fetch_hevy(h, args.target, lookback_days=args.days)
             print(f"[fetch_mcp] pobrano {len(raw_hevy)} workoutów Hevy", file=sys.stderr)
             write_stdin_json(raw_hevy, os.path.join(tmp, "raw_hevy.json"))
         finally:
-            h.close()
+            if isinstance(h, McpStdioClient):
+                h.close()
 
     # ---- Apple (HTTP) ----
     if not args.skip_apple:

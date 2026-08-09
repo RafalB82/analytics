@@ -5,13 +5,14 @@ from datetime import date, timedelta
 
 import pytest
 
-from analytics.acwr import build_cardio_acwr
+from analytics.acwr import acwr_readiness_modifier, build_cardio_acwr
 from analytics.apple_cardio import (
     apple_workout_daily_load,
     build_apple_cardio_series,
     compute_trimp_session_load,
     is_cardio_workout,
 )
+from analytics.config import settings
 
 
 class TestIsCardioWorkout:
@@ -129,22 +130,55 @@ class TestAppleWorkoutDailyLoad:
         assert 100 <= load <= 400  # ~88 min
 
 
+class TestCardio7dPenalty:
+    """Kara gotowości z liczby mocnych sesji cardio w ostatnich 7d."""
+
+    def test_thresholds(self):
+        from analytics.readiness_integration import _cardio_7d_penalty
+        # (lo, hi) = (2, 3): 0-1 -> 0, 2 -> +1, 3+ -> +2
+        assert _cardio_7d_penalty(0) == 0
+        assert _cardio_7d_penalty(1) == 0
+        assert _cardio_7d_penalty(2) == 1
+        assert _cardio_7d_penalty(3) == 2
+        assert _cardio_7d_penalty(5) == 2
+
+
 class TestBuildCardioAcwr:
     def test_build_cardio_acwr_on_cycling(self):
         today = date(2026, 8, 7)
         start = today - timedelta(days=28)
-        # 3 jazdy rowerowe w ciągu ostatnich dni
+        # za mało realnych dni cardio w oknie chronic (2 < cardio_min_valid_days=3)
+        # -> chronic zdominowany zerami, ratio to artefakt -> strefa "niewystarczające dane"
         rides = [
             {"name": "Outdoor Cycling", "start": str(today - timedelta(days=1)) + "T17:00:00",
-             "duration_min": 90, "avg_heart_rate_bpm": 145},
-            {"name": "Outdoor Cycling", "start": str(today - timedelta(days=3)) + "T17:00:00",
              "duration_min": 90, "avg_heart_rate_bpm": 145},
             {"name": "Outdoor Cycling", "start": str(today - timedelta(days=6)) + "T17:00:00",
              "duration_min": 90, "avg_heart_rate_bpm": 145},
         ]
         series = build_apple_cardio_series(rides, start, today)
         res = build_cardio_acwr(series)
+        # ratio liczony, ale strefa jawnie sygnalizuje niewiarygodność próbki,
+        # a nie fałszywe "wysokie ryzyko" (3.36 z 3 sesji w 28d to artefakt)
         assert res.ratio > 0
+        assert res.zone == settings.ACWR.zone_insufficient
+        assert acwr_readiness_modifier(res) == 0  # brak danych -> 0 punktów karnych
+
+    def test_build_cardio_acwr_trustworthy_sample(self):
+        today = date(2026, 8, 7)
+        window = settings.ACWR.chronic_window
+        start = today - timedelta(days=window)
+        # >= cardio_min_valid_days realnych dni -> normalna klasyfikacja stref
+        n = settings.ACWR.cardio_min_valid_days
+        rides = [
+            {"name": "Outdoor Cycling",
+             "start": str(today - timedelta(days=(i * 2) + 1)) + "T17:00:00",
+             "duration_min": 60, "avg_heart_rate_bpm": 150}
+            for i in range(n)  # dni 1,3,5,... -> n dni cardio w oknie chronic
+        ]
+        series = build_apple_cardio_series(rides, start, today)
+        res = build_cardio_acwr(series)
+        # próbka wystarczająca -> klasyczne strefy ryzyka (nie "niewystarczające dane")
+        assert res.zone != settings.ACWR.zone_insufficient
         assert res.zone in ("niedociążenie", "optymalna", "podwyższone ryzyko", "wysokie ryzyko")
 
     def test_build_series_ignores_strength(self):

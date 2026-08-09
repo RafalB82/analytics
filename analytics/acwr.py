@@ -150,7 +150,12 @@ def acwr_readiness_modifier(acwr: ACWRResult) -> int:
     Modyfikator do scoringu gotowości (dodaj do sumy punktów 0-2 z HRV/RHR/snu).
     Zwraca punkty karne niezależne od HRV — bo ACWR łapie kumulację
     zmęczenia mechanicznego, na które HRV może jeszcze nie zareagować.
+
+    Strefa "niewystarczające dane" (za mało dni cardio do wiarygodnego ratio)
+    daje 0 punktów — to brak informacji, nie ryzyko. Nie karzemy za brak danych.
     """
+    if acwr.zone == settings.ACWR.zone_insufficient:
+        return 0
     if acwr.zone == "wysokie ryzyko":
         return 2
     if acwr.zone == "podwyższone ryzyko":
@@ -186,7 +191,29 @@ def build_cardio_acwr(daily_series: list[SessionLoad]) -> ACWRResult:
     gotowości (np. maksimum stref / suma punktów karnych).
 
     Zwraca ACWRResult w strefach 0.8-1.3 (stosunek — jednostki bez znaczenia).
+
+    Guard na próbkę: gdy w oknie chronic jest zbyt mało dni z realnym
+    obciążeniem (load>0), chronic jest zdominowany przez zera i ratio jest
+    niewiarygodnym artefaktem (np. 3.32 z 4 sesji w 28d). Wtedy zwracamy
+    strefę "niewystarczające dane" zamiast fałszywej strefy ryzyka — to
+    decyzja diagnostyczna, nie karząca (readiness_modifier => 0).
     """
+    n_valid = sum(1 for s in daily_series if s.load > 0)
+    if n_valid < settings.ACWR.cardio_min_valid_days:
+        logger.info(
+            "ACWR cardio: tylko %d dni z obciążeniem w oknie chronic (< %d) "
+            "-> strefa '%s' (niewiarygodne ratio)",
+            n_valid, settings.ACWR.cardio_min_valid_days,
+            settings.ACWR.zone_insufficient,
+        )
+        acute = compute_acute_load(daily_series)
+        chronic = compute_chronic_load(daily_series)
+        ratio = 0.0 if chronic == 0 else round(acute / chronic, 2)
+        return ACWRResult(
+            acute_load=acute, chronic_load=chronic, ratio=ratio,
+            zone=settings.ACWR.zone_insufficient,
+        )
+
     acute = compute_acute_load(daily_series)
     chronic = compute_chronic_load(daily_series)
     return acwr_ratio(acute, chronic)
@@ -235,12 +262,22 @@ def build_acwr(
         from .apple_cardio import build_apple_cardio_series
         cardio_series = build_apple_cardio_series(apple_workouts, start, target)
         cardio_res = build_cardio_acwr(cardio_series)
+        # cardio_7d: suma TRIMP + liczba sesji z ostatnich 7 dni (okno acute).
+        # Przy "szarpanym" cardio (nieregularne, ale mocne) to realny sygnał
+        # wpływu na bieżący blok tygodniowy — ważniejszy niż chronic/ratio,
+        # które przy rzadkich sesjach zawsze będą zaniżone. Dni bez cardio = 0.
+        acute_start = target - timedelta(days=settings.ACWR.acute_window - 1)
+        cardio_7d = sum(s.load for s in cardio_series if s.day >= acute_start)
+        cardio_7d_sessions = sum(1 for s in cardio_series
+                                 if s.day >= acute_start and s.load > 0)
         cardio_detail = {
             "acute": cardio_res.acute_load,
             "chronic": cardio_res.chronic_load,
             "ratio": cardio_res.ratio,
             "zone": cardio_res.zone,
             "n_cardio_days": sum(1 for s in cardio_series if s.load > 0),
+            "cardio_7d_total": round(cardio_7d, 1),      # TRIMP w ostatnich 7d
+            "cardio_7d_sessions": cardio_7d_sessions,     # ile mocnych sesji w 7d
         }
 
     logger.info("ACWR siła: ratio=%.2f (%s), pokrycie RPE=%.1f%% | cardio: %s",

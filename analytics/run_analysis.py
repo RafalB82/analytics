@@ -101,6 +101,7 @@ def run(payload: dict) -> dict[str, Any]:
             apple_workouts=payload.get("apple_workouts", []),
             cardio_sessions=payload.get("cardio_sessions", []),
             mfp_weight=payload.get("mfp_weight") or [],
+            mfp_daily_kcal=payload.get("mfp_daily_kcal") or [],
             apple_temp=payload.get("apple_temp", []),
         ))
         target = ctx.target

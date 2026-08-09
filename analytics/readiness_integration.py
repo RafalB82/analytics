@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .acwr import ACWRResult, acwr_combined_modifier
+from .acwr import ACWRResult, acwr_readiness_modifier
 from .baseline import MetricPoint, compute_ewma_baseline, compute_trend_slope
 from .config import settings
 from .exceptions import MissingBaselineError
@@ -77,6 +77,22 @@ def classify_zone(total_score: int) -> tuple[str, str, str]:
     return "czerwona", "max RPE 7 lub regeneracja", "objętość -30-40%"
 
 
+def _cardio_7d_penalty(sessions_7d: int) -> int:
+    """Kara gotowości z liczby mocnych sesji cardio w ostatnich 7 dniach.
+
+    Przy nieregularnym ("szarpanym") cardio ratio jest niewiarygodne, więc
+    realny sygnał obciążenia tygodnia to ile mocnych sesji wpadło. Próg z
+    settings.ACWR.cardio_7d_penalty_thresholds=(lo, hi):
+      0-1 sesji -> 0, 2 (lo) -> +1, 3+ (hi) -> +2.
+    """
+    lo, hi = settings.ACWR.cardio_7d_penalty_thresholds
+    if sessions_7d >= hi:
+        return 2
+    if sessions_7d >= lo:
+        return 1
+    return 0
+
+
 def compute_full_readiness(
     hrv_series: list[MetricPoint],
     rhr_series: list[MetricPoint],
@@ -85,6 +101,7 @@ def compute_full_readiness(
     temp_alert: TempAlert,
     spo2_confirmed: bool,
     cardio_acwr: ACWRResult | None = None,
+    cardio_7d_sessions: int = 0,
 ) -> ReadinessOutput:
 
     hrv_baseline = compute_ewma_baseline(hrv_series)
@@ -102,7 +119,22 @@ def compute_full_readiness(
         sleep_hours=sleep_hours_today,
     )
 
-    acwr_penalty = acwr_combined_modifier(acwr_result, cardio_acwr)
+    # Kara ACWR siłowej z ratio (wiarygodne — siła regularna).
+    acwr_penalty = acwr_readiness_modifier(acwr_result)
+
+    # Kara cardio: przy nieregularnym ("szarpanym") cardio ratio jest niewiarygodne
+    # (chronic zaniżone -> fałszywe wysokie ryzyko). Dlatego cardio karzemy na
+    # podstawie cardio_7d_sessions — ile MOCNYCH sesji wpadło w bieżący tydzień
+    # (realny sygnał wpływu na blok). Ratio cardio służy tylko gdy chronic jest
+    # wiarygodny (regularne cardio, patrz ACWR.cardio_min_valid_days); wtedy
+    # bierzemy max(ratio_penalty, 7d_penalty).
+    cardio_penalty = _cardio_7d_penalty(cardio_7d_sessions)
+    if cardio_acwr is not None and cardio_acwr.zone not in (
+        settings.ACWR.zone_insufficient, ""
+    ):
+        cardio_penalty = max(cardio_penalty, acwr_readiness_modifier(cardio_acwr))
+    acwr_penalty = max(acwr_penalty, cardio_penalty)
+
     total = base + acwr_penalty
 
     zone, max_rpe, volume_note = classify_zone(total)

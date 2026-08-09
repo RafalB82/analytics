@@ -24,10 +24,11 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["analytics*"]
+include = ["analytics*", "mcp_fetchers*"]
 
 [tool.setuptools.package-data]
 analytics = ["py.typed"]
+mcp_fetchers = ["README.md"]
 
 [tool.ruff]
 line-length = 110
@@ -43,7 +44,7 @@ strict = false
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
-exclude = ["tests/"]
+exclude = ["tests/", "mcp_fetchers/"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

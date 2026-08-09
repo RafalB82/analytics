@@ -33,11 +33,14 @@ MFP (zjedzone kalorie/jedzenie) ─────────┘
 - `exceptions.py`, `logging.py`, `models.py` — wyjątki domenowe, logowanie, modele Pydantic
 - `baseline.py` — baseline EWMA + trend + detekcja przesunięcia normy
 - `acwr.py` — Acute:Chronic Workload Ratio (Gabbett 2016)
+- `energy_balance.py` — bilans wydatek vs zjedzone kcal (ryzyko urazu/infekcji)
 - `temperature.py` — alert temperatury nadgarstka (twardy override)
 - `nutrition_adaptive.py` — cel kaloryczny (TDEE z aktywności + marża wg celu) + białko
 - `readiness_integration.py` — finalny scoring + strefa
 - `fetch_*.py` — konwersja danych z MCP na serie analityczne
 - `run_analysis.py` — orchestrator (wejście JSON → wyjście JSON)
+- `mcp_fetchers/` — warstwa POBIERANIA z MCP (Hevy/Apple/MFP) + konwersja formatu
+  (patrz `mcp_fetchers/README.md` oraz `docs/ARCHITECTURE.md` — mapa warstw)
 - `tests/` — testy jednostkowe + integracyjne · `docs/` — dokumentacja
 
 ## Uruchomienie
@@ -71,6 +74,9 @@ python -m analytics.run_analysis '<json>'  # ręczny orchestrator
   "cardio_sessions": [ /* legacy, ręczne {"startTime","duration_minutes","rpe"} */
     {"startTime": "2026-08-05T08:00:00", "duration_minutes": 90, "rpe": 6}
   ],
+  "mfp_daily_kcal": [ /* zjedzone kcal z MFP diary: {day, kcal} — dla energy_balance */
+    {"day": "2026-08-06", "kcal": 2603.0}
+  ],
   "params": {
     "phase": "utrzymanie",
     "bodyweight_kg": 71.0
@@ -95,8 +101,10 @@ python -m analytics.run_analysis '<json>'  # ręczny orchestrator
 ### Wyjście JSON
 
 Sekcje: `readiness` (strefa/RPE/objętość), `acwr` (acute/chronic/ratio/zone),
-`acwr_detail.rpe_coverage`, `temperature`, `nutrition` (cel kaloryczny z aktywności),
-`baseline_trends` (HRV/RHR trend + R²), `inputs` (ile punktów użyto).
+`acwr_detail.rpe_coverage` + `cardio` (osobny ACWR cardio + `cardio_7d_sessions`),
+`temperature`, `nutrition` (cel kaloryczny z aktywności), `energy_balance`
+(wydatek vs zjedzone kcal — ryzyko niedoboru), `baseline_trends` (HRV/RHR trend + R²),
+`inputs` (ile punktów użyto).
 
 ## Ważne zachowania
 
@@ -115,6 +123,14 @@ Sekcje: `readiness` (strefa/RPE/objętość), `acwr` (acute/chronic/ratio/zone),
   jedzenie, ale nie wyznacza celu.
 - **Waga** to punkt kontrolny z Apple (w dni ważenia), nie trend — służy do
   białka i kontekstu; bez niej cel kaloryczny i tak działa (z samej aktywności).
+- **Cardio ACWR** przy nieregularnym cardio jest oznaczany „niewystarczające dane"
+  (za mało dni w chronic), a realną karę gotowości niesie `cardio_7d_sessions`
+  (ile mocnych sesji w tygodniu). Nie interpretuj ratio cardio jako ryzyka,
+  gdy strefa to „niewystarczające dane".
+- **Bilans energetyczny** (`energy_balance`): bez danych MFP (zjedzone kcal)
+  sekcja zwraca „niewystarczające dane" — nie raportuj ryzyka niedoboru bez
+  realnych kcal. Przy min. 3 ważnych dniach w oknie 7d liczy pokrycie wydatku
+  i skumulowany niedobór (próg ryzyka w `config.ENERGY_BALANCE`).
 
 ## Jakość / CI
 

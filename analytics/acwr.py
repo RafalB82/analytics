@@ -421,6 +421,17 @@ def build_acwr(
                                  if s.day >= acute_start and s.load >= strong_floor)
         cardio_7d_days = sum(1 for s in cardio_series
                              if s.day >= acute_start and s.load > 0)
+        # mocne sesje z jawnym dniem tygodnia (żeby nie liczyć go z ISO przy
+        # interpretacji): lista {day, day_of_week, trimp} dla TRIMP >= próg.
+        _dow = ("pon", "wt", "śr", "czw", "pt", "sb", "nd")
+        strong_sessions = [
+            {
+                "day": s.day.isoformat(),
+                "day_of_week": _dow[s.day.weekday()],
+                "trimp": round(s.load, 1),
+            }
+            for s in cardio_series if s.day >= acute_start and s.load >= strong_floor
+        ]
         gap_cardio = detect_training_gap(cardio_series, target)
         cardio_detail = {
             "acute": cardio_res.acute_load,
@@ -431,6 +442,7 @@ def build_acwr(
             "cardio_7d_total": round(cardio_7d, 1),      # TRIMP w ostatnich 7d (lekka+mocna)
             "cardio_7d_days": cardio_7d_days,             # dni z jakimkolwiek cardio w 7d
             "cardio_7d_sessions": cardio_7d_sessions,     # MOCNE sesje (TRIMP>=próg) w 7d
+            "strong_sessions": strong_sessions,           # list mocnych sesji + dzień tygodnia
         }
 
     # luka łączona: bierz tor, który faktycznie wykrył przerwę i akurat dziś

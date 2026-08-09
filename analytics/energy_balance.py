@@ -103,6 +103,11 @@ def compute_energy_balance(
     cumulative = 0.0
     eaten_sum = 0.0
     daily: list[dict] = []
+
+    # polskie 3-literowe skróty dni tygodnia (0=pon..6=nd) — jawnie w raporcie,
+    # żeby nie liczyć dnia tygodnia z ISO przy interpretacji (źródło pomyłek).
+    _DOW = ("pon", "wt", "śr", "czw", "pt", "sb", "nd")
+
     # niepełny log: kcal < wydatek * frac (np. wydatek 2500, frac 0.5 -> próg 1250).
     # Dzień z mniej niż połową wydatku to niemal na pewno niepełny log (wyjazd/
     # weekend/problemy z notowaniem), nie celowy post — nie liczymy go do niedoboru.
@@ -120,8 +125,14 @@ def compute_energy_balance(
             cumulative += bal
             eaten_sum += kcal_f
             n_valid += 1
+        day_iso = str(e.get("day"))[:10]
+        try:
+            dow = _DOW[date.fromisoformat(day_iso).weekday()]
+        except (ValueError, TypeError):
+            dow = "?"
         daily.append({
-            "day": str(e.get("day"))[:10],
+            "day": day_iso,
+            "day_of_week": dow,
             "eaten_kcal": round(kcal_f, 0),
             "expenditure_kcal": round(expenditure_kcal, 0),
             "balance_kcal": round(bal, 0),

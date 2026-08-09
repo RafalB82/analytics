@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 from . import acwr as acwr_mod
@@ -157,23 +157,27 @@ def confidence_stage(ctx: PipelineContext) -> PipelineContext:
 
     confidence: dict[str, dict] = {}
 
-    # n_points musi odzwierciedlać liczbę punktów W OKNIE metryki (ostatnie
-    # window_days dni), NIE długość całej dostarczonej serii. Payload zwykle
-    # obejmuje ACWR_LOOKBACK_DAYS=35 dni (dla okna chronic ACWR), więc len(seria)
-    # regularnie przekracza window_days — zawyżało completeness (cap na 1.0)
-    # i składową 'ilość danych historycznych', maskując realne luki w oknie.
-    # Wzorzec: acwr liczy training_days (faktyczne dni treningowe), nie len(listy).
-    def _points_in_window(vals: list, window: int) -> int:
-        return min(len(vals), window)
+    # n_points musi być liczbą punktów FAKTYCZNIE leżących w oknie kalendarzowym
+    # metryki (ostatnie window_days dni), NIE rozmiarem całej dostarczonej serii.
+    # Payload obejmuje ACWR_LOOKBACK_DAYS=35d (dla okna chronic ACWR); to_hrv_series
+    # / to_rhr_series zwracają rzadką listę (tylko dni z danymi), więc sam cap
+    # rozmiaru (min(len, window)) NIE wystarcza — punkt może leżeć poza oknem
+    # (np. użytkownik nie nosił zegarka w ostatnich 14d). Ten sam wzorzec błędu
+    # co nutrition_adaptive.window_actual_days (rozpiętość kalendarzowa vs liczba
+    # punktów) — tu filtrujemy po dacie, analogicznie do acwr.compute_acute_load
+    # na wypełnionym szeregu dziennym.
+    def _points_in_window(points, window: int, target) -> int:
+        cutoff = target - timedelta(days=window - 1)
+        return sum(1 for p in points if p.day >= cutoff)
 
     c_hrv = conf_mod.compute_confidence(
-        n_points=_points_in_window(hrv_vals, 14), window_days=14,
+        n_points=_points_in_window(m["hrv_series"], 14, ctx.target), window_days=14,
         stability=conf_mod.hr_series_stability(hrv_vals),
     )
     if c_hrv:
         confidence["hrv"] = c_hrv.to_dict()
     c_rhr = conf_mod.compute_confidence(
-        n_points=_points_in_window(rhr_vals, 14), window_days=14,
+        n_points=_points_in_window(m["rhr_series"], 14, ctx.target), window_days=14,
         stability=conf_mod.hr_series_stability(rhr_vals),
     )
     if c_rhr:

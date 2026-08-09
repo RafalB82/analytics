@@ -105,16 +105,17 @@ class TestConfidenceStageNPointsInWindow:
             for i in range(n)
         ]
 
-    def _ctx(self, hrv_len: int, energy_series, goal_n_days) -> PipelineContext:
+    def _ctx(self, hrv_len: int, energy_series, goal_n_days, hrv_start=None) -> PipelineContext:
         from datetime import date, timedelta
 
         from analytics.acwr import SessionLoad
         from analytics.baseline import MetricPoint
 
-        start = date(2026, 8, 1)
+        start = hrv_start or date(2026, 8, 1)
         hrv = [MetricPoint(day=start + timedelta(days=i), value=50.0) for i in range(hrv_len)]
         rhr = hrv  # ta sama długość dla RHR
         ctx = PipelineContext()
+        ctx.target = date(2026, 8, 7)  # target dla filtra okna kalendarzowego
         ctx.models = {
             "hrv_series": hrv,
             "rhr_series": rhr,
@@ -151,16 +152,52 @@ class TestConfidenceStageNPointsInWindow:
 
     def test_hrv_rhr_n_points_capped_to_window(self):
         """HRV/RHR z serią DŁUŻSZĄ niż okno 14d (payload 35d) -> n_points=14 (okno),
-        nie 35."""
+        nie 35. Seria pokrywa okno, więc wszystkie 14 dni okna mają dane."""
+        from datetime import date, timedelta
+
         from analytics.pipeline import confidence_stage
 
-        # seria 35 punktów -> okno 14
-        ctx = self._ctx(hrv_len=35, energy_series=self._energy(1), goal_n_days=7)
+        # seria 35 dni wstecz od target (jak payload ACWR) — kończy się na target
+        start = date(2026, 8, 7) - timedelta(days=34)
+        ctx = self._ctx(hrv_len=35, energy_series=self._energy(1), goal_n_days=7,
+                        hrv_start=start)
         confidence_stage(ctx)
-        assert ctx.confidence["hrv"]["n_points"] == 14
+        assert ctx.confidence["hrv"]["n_points"] == 14  # punkty w oknie 14d
         assert ctx.confidence["rhr"]["n_points"] == 14
         # n_points nigdy nie przekracza window_days
         assert ctx.confidence["hrv"]["n_points"] <= ctx.confidence["hrv"]["window_days"]
+
+    def test_hrv_points_outside_window_not_counted(self):
+        """AUDYT follow-up: HRV obecne TYLKO PRZED oknem 14d (użytkownik nie nosił
+        zegarka w ostatnich 14 dniach) -> w oknie kalendarzowym nie ma ani jednego
+        punktu. compute_confidence zwraca None (n_points=0 < min_points=3), więc
+        wpis 'hrv' NIE powstaje — NIE raportujemy fałszywego 14/1.0/High."""
+        from datetime import date, timedelta
+
+        from analytics.pipeline import confidence_stage
+
+        # punkty 15..35 dni wstecz — poza oknem 14d (brak pomiaru w oknie)
+        start = date(2026, 8, 7) - timedelta(days=35)
+        ctx = self._ctx(hrv_len=21, energy_series=self._energy(1), goal_n_days=7,
+                        hrv_start=start)
+        confidence_stage(ctx)
+        # brak danych w oknie -> brak wpisu (nie fałszywa pewność High)
+        assert "hrv" not in ctx.confidence or ctx.confidence["hrv"].get("n_points", 0) == 0
+
+    def test_hrv_partial_coverage_in_window(self):
+        """HRV w oknie 14d tylko przez część dni -> completeness < 1.0, nie fałszywe 1.0."""
+        from datetime import date, timedelta
+
+        from analytics.pipeline import confidence_stage
+
+        # 7 punktów w oknie 14d (czyli 50% okna) — zaczynając 5 dni przed target
+        start = date(2026, 8, 7) - timedelta(days=4)
+        ctx = self._ctx(hrv_len=5, energy_series=self._energy(1), goal_n_days=7,
+                        hrv_start=start)
+        confidence_stage(ctx)
+        hrv = ctx.confidence["hrv"]
+        assert hrv["n_points"] <= 5  # max 5 punktów (seria ma 5)
+        assert hrv["completeness"] < 1.0  # nie pełne okno
 
     def test_tdee_n_points_never_exceeds_window(self):
         """n_days zgłaszane przez build_goal_output nie może przekroczyć window_days

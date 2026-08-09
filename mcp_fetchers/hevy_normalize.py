@@ -44,9 +44,12 @@ Użycie:
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from contextlib import suppress
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 # Typy serii, które analytics i tak pomija (rozgrzewki) — rzucamy je, żeby nie
 # zaśmiecać wejścia (fetch_hevy sam je odrzuca przez SKIP_SET_TYPES, ale czysto
@@ -62,6 +65,12 @@ def _normalize_time(iso: str) -> str:
     północy w strefie z dużym przesunięciem od UTC mógłby wylądować pod złym
     dniem kalendarzowym i przesunąć load w oknie ACWR.
 
+    NAIWNY input (bez informacji o strefie, np. '2026-08-05T17:12:48') to
+    nieoczekiwany format — Hevy API zawsze zwraca jawny offset (+00:00).
+    Traktujemy go deterministycznie JAKO UTC (nie lokalną strefę procesu),
+    żeby wynik nie zależał od TZ środowiska uruchomieniowego, i logujemy
+    ostrzeżenie.
+
     Zwraca niezmienione wejście, gdy nie da się sparsować."""
     if not iso:
         return iso
@@ -71,7 +80,15 @@ def _normalize_time(iso: str) -> str:
         # niezdatny format — nie zgaduj, zwróć jak jest (caller i tak sprawdza
         # startswith("20"))
         return iso
-    # skróć do sekund (obetnij ułamki/mikrosekundy) + UTC 'Z'
+    if dt.tzinfo is None:
+        # NAIWNY input (bez informacji o strefie). Hevy API zawsze zwraca jawny
+        # offset (+00:00) — naiwny string to nieoczekiwany format. NIE zgadujemy
+        # lokalną strefą procesu (astimezone na naiwnym = niedeterministyczna
+        # zależność od TZ środowiska, 9h rozjazdu między kontenerami), tylko
+        # logujemy ostrzeżenie i zakładamy deterministycznie UTC — spójnie
+        # z tym, że Hevy raportuje w UTC (przykłady w README).
+        logger.warning("hevy start_time bez strefy (%.20s...) — przyjęto UTC", iso)
+        dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 

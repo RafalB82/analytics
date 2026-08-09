@@ -43,6 +43,26 @@ class TestNormalizeTime:
     def test_empty_unchanged(self):
         assert _normalize_time("") == ""
 
+    def test_naive_input_treated_as_utc_not_local_tz(self):
+        """AUDYT regresja: naiwny string (bez strefy) NIE może zależeć od TZ
+        procesu (.astimezone na naiwnym obiekcie zakładał lokalną strefę systemu
+        -> 9h rozjazdu między kontenerem UTC a strefą Tokio). Fix: naiwne wejście
+        traktujemy deterministycznie JAKO UTC, niezależnie od środowiska."""
+        import os
+        import time
+        from contextlib import suppress
+
+        naive = "2026-08-05T17:12:48"
+        results = {}
+        for tz in ("UTC", "Asia/Tokyo", "America/New_York"):
+            os.environ["TZ"] = tz
+            with suppress(AttributeError):  # Windows: brak tzset
+                time.tzset()
+            results[tz] = _normalize_time(naive)
+        # deterministyczny niezależnie od strefy procesu
+        assert len(set(results.values())) == 1
+        assert results["UTC"] == "2026-08-05T17:12:48Z"
+
 
 class TestSetTonnage:
     def test_normal(self):

@@ -47,6 +47,11 @@ MFP_MCP_URL = os.environ.get("MFP_MCP_URL", "http://localhost:8000/mcp")
 HEVY_BIN = os.environ.get("HEVY_BIN", "/home/rafal/hevy-mcp/packages/node/dist/standalone.mjs")
 HEVY_API_KEY = os.environ.get("HEVY_API_KEY", "")
 ACWR_LOOKBACK_DAYS = 35  # okno chronic ACWR (jak w analytics.acwr)
+# MFP: okno do bilansu energetycznego — energy_balance używa 7d, więc pobieramy
+# 7 + zapas 5 = 12 dni, żeby pokryć niepełne/mocno niskokaloryczne dni przy
+# wyjeździe/weekendzie. NIE używamy ACWR_LOOKBACK_DAYS (35) — to marnowanie
+# (MFP woła get_diary per dzień = wolne).
+MFP_LOOKBACK_DAYS = int(os.environ.get("MFP_LOOKBACK_DAYS", "12"))
 
 APPLE_TOOLS = {
     "daily_range": "get_daily_activity_range",
@@ -273,15 +278,20 @@ def fetch_apple(client: McpHttpClient, target: str, lookback_days: int = ACWR_LO
 
 
 def fetch_mfp(client: McpHttpClient, target: str, days: int = 7) -> list:
-    """Pobiera dzienniki MFP (zjedzone kcal) dla `days` dni wstecz od targetu.
+    """Pobiera dzienniki MFP (zjedzone kcal) z okna [target-days+1, target].
 
     Woła narzędzie MCP `mfp_get_diary` (parametr `{params: {date}}`) per dzień
-    i zwraca listę surowych dzienników ({date, meals, daily_totals}). Dni bez
-    danych / z błędem są pomijane (nie psują pipeline)."""
+    i zwraca listę surowych dzienników ({date, meals, daily_totals}).
+
+    WAŻNE (fix 2026-08-09): okno MUSI kończyć się NA `target` (range days..0),
+    inaczej najnowszy dzień wypada z analizy — przez co energy_balance pokazywał
+    zaniżone zjedzone kcal i fałszywy niedobór. Dodatkowo odsiewamy wpisy bez
+    sensownego `date` (serwer zwraca pusty obiekt dla dni bez danych, zamiast
+    błędu)."""
     from datetime import date, timedelta
     t = date.fromisoformat(target)
     diaries = []
-    for i in range(days, 0, -1):  # starsze -> nowsze
+    for i in range(days, -1, -1):  # days..0 → włącznie z target
         d = (t - timedelta(days=i)).isoformat()
         try:
             # response_format='json' jest KLUCZOWE: bez niego mfp_get_diary
@@ -295,8 +305,10 @@ def fetch_mfp(client: McpHttpClient, target: str, days: int = 7) -> list:
             print(f"[fetch_mcp] mfp {d}: {e}", file=sys.stderr)
             continue
         if isinstance(res, list):
-            diaries.extend(res)
-        elif isinstance(res, dict):
+            for x in res:
+                if isinstance(x, dict) and x.get("date"):
+                    diaries.append(x)
+        elif isinstance(res, dict) and res.get("date"):
             diaries.append(res)
     return diaries
 
@@ -369,7 +381,7 @@ def main() -> int:
         try:
             m = McpHttpClient(MFP_MCP_URL)
             m.initialize()
-            raw_mfp = fetch_mfp(m, args.target, days=args.days)
+            raw_mfp = fetch_mfp(m, args.target, days=MFP_LOOKBACK_DAYS)
             print(f"[fetch_mcp] mfp: {len(raw_mfp)} dni z dziennikiem", file=sys.stderr)
             write_stdin_json(raw_mfp, os.path.join(tmp, "raw_mfp.json"))
         except JsonRpcError as e:

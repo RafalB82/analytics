@@ -99,6 +99,12 @@ class ACWRSettings:
     #: wpadło w ten tydzień" — przy nieregularnym cardio ważniejszy niż ratio.
     cardio_7d_penalty_thresholds: tuple[int, int] = (2, 3)
 
+    #: minimalny TRIMP sesji, aby liczyć ją do `cardio_7d_sessions` jako "mocną".
+    #: Dni z TRIMP poniżej progu (lekki rower/spacer/krótki wiosłowanie) to ruch
+    #: uzupełniający, NIE mocna sesja obciążająca blok — nie wchodzą do karencji.
+    #: TRIMP ~100+ = solidna, ukierunkowana sesja (np. 71min @ avgHR 147 -> 149).
+    cardio_strong_trimp_floor: float = 100.0
+
     #: nazwa strefy dla ACWR cardio z za małą próbką (nie jest strefą ryzyka)
     zone_insufficient: str = "niewystarczające dane"
 
@@ -189,6 +195,14 @@ class EnergyBalanceSettings:
     #: (~0.45 kg/tydz) przy obciążeniu treningowym to realny sygnał ryzyka.
     deficit_low_kcal: int = 1500
     deficit_high_kcal: int = 3500
+
+    #: próg kcal/dzień uznawany za NIEPEŁNY LOG (nie za celowy post). Dzień, w którym
+    #: zjedzone kcal < `expenditure * incomplete_frac`, to niemal na pewno niepełny
+    #: log (wyjazd/weekend/problemy z notowaniem) — niskie kcal to artefakt, nie
+    #: realny deficyt. Taki dzień nie wchodzi do skumulowanego niedoboru, jest
+    #: raportowany w `daily` z flagą `incomplete: true` i liczony w `n_incomplete_days`.
+    #: Próg PROPORCJONALNY do wydatku (nie bezwzględny): np. wydatek 2500 -> próg 1250.
+    incomplete_frac_of_expenditure: float = 0.5
 
     #: czy uwzględniać cel (marżę) — jeśli target_kcal < tdee (redukcja), ocena
     #: niedoboru względem celu jest łagodniejsza niż względem surowego TDEE.

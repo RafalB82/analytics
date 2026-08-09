@@ -32,6 +32,17 @@ from .fetch_mfp import to_weight_series
 from .readiness_integration import compute_full_readiness
 from .validators import validate_input
 
+_PL_DOW = {
+    0: "pon", 1: "wt", 2: "śr", 3: "czw", 4: "pt", 5: "sb", 6: "nd",
+}
+
+
+def _dow_label(d: date) -> str:
+    """Zwraca polski, 3-literowy skrót dnia tygodnia (np. 'wt', 'czw', 'sb').
+    Używany w raportach, żeby uniknąć pomyłek przy interpretacji dat (agent/LLM
+    nie musi liczyć dnia tygodnia z ISO — źródło pomyłek)."""
+    return _PL_DOW.get(d.weekday(), "?")
+
 
 @dataclass
 class PipelineContext:
@@ -238,7 +249,7 @@ def serialization_stage(ctx: PipelineContext) -> PipelineContext:
             "cardio": ctx.acwr_info.get("cardio_detail"),
             "gap": (asdict(ctx.acwr_info["gap"]) if ctx.acwr_info.get("gap") is not None else None),
             "daily_loads_last14": [
-                {"day": str(d.day), "load": d.load}
+                {"day": str(d.day), "day_of_week": _dow_label(d.day), "load": d.load}
                 for d in ctx.acwr_info["daily_loads"][-14:]
             ],
         },

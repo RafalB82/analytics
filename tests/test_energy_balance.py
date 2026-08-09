@@ -51,6 +51,24 @@ class TestComputeEnergyBalance:
         assert res.status == "ok"
         assert res.n_valid_days == 7  # okno domyślne 7
 
+    def test_incomplete_days_not_counted_in_deficit(self):
+        # dni < próg (incomplete_day_kcal_floor=800) to niepełny log (wyjazd/weekend)
+        # -> nie wchodzą do skumulowanego niedoboru, ale są raportowane.
+        # 5 pełnych dni po 2400 + 2 niepełne (400, 500) przy wydatku 2500.
+        eaten = ([_eaten(i, 2400) for i in range(5)]  # pełne
+                 + [{"day": "2026-08-0" + str(n), "kcal": 400} for n in (7, 8)])  # niepełne
+        res = compute_energy_balance(eaten, expenditure_kcal=2500)
+        assert res.status == "ok"
+        assert res.n_valid_days == 5          # tylko pełne dni liczone
+        assert res.n_incomplete_days == 2     # 2 niepełne oznaczone
+        # skumulowany tylko z pełnych: 5*(2400-2500) = -500 -> niski (nie -3700)
+        assert res.cumulative_deficit_kcal == -500
+        assert res.deficit_risk == "niski"
+        # niepełne dni mają flagę w daily
+        inc = [d for d in res.daily if d["incomplete"]]
+        assert len(inc) == 2
+        assert all(d["eaten_kcal"] < 800 for d in inc)
+
 
 class TestClassifyDeficitRisk:
     def test_thresholds(self):

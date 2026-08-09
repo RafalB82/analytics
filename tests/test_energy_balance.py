@@ -69,6 +69,41 @@ class TestComputeEnergyBalance:
         assert len(inc) == 2
         assert all(d["eaten_kcal"] < 800 for d in inc)
 
+    # --- faza 6.2d: jawna jakość danych bilansu ---
+
+    def test_data_quality_high_when_no_incomplete(self):
+        res = compute_energy_balance([_eaten(i, 2400) for i in range(5)], expenditure_kcal=2500)
+        assert res.data_quality == "high"
+        assert res.data_quality_notes == []
+
+    def test_data_quality_medium_one_incomplete(self):
+        eaten = ([_eaten(i, 2400) for i in range(5)]
+                 + [{"day": "2026-08-0" + str(n), "kcal": 400} for n in (7,)])  # 1 niepełny
+        res = compute_energy_balance(eaten, expenditure_kcal=2500)
+        assert res.data_quality == "medium"
+        assert any("niepełnego logu" in n for n in res.data_quality_notes)
+
+    def test_data_quality_low_multiple_incomplete(self):
+        eaten = ([_eaten(i, 2400) for i in range(5)]
+                 + [{"day": "2026-08-0" + str(n), "kcal": 400} for n in (7, 8)])  # 2 niepełne
+        res = compute_energy_balance(eaten, expenditure_kcal=2500)
+        assert res.data_quality == "low"
+        assert any("niepełnego logu" in n for n in res.data_quality_notes)
+
+    def test_data_quality_low_when_insufficient_data(self):
+        res = compute_energy_balance([], expenditure_kcal=2500)
+        assert res.data_quality == "low"
+        assert any("Brak wystarczających danych" in n for n in res.data_quality_notes)
+
+    def test_data_quality_in_output_dict(self):
+        from analytics.energy_balance import build_energy_balance_output
+        out = build_energy_balance_output(
+            [_eaten(i, 2400) for i in range(5)], 2500
+        )
+        assert "data_quality" in out
+        assert "data_quality_notes" in out
+        assert out["data_quality"] == "high"
+
 
 class TestClassifyDeficitRisk:
     def test_thresholds(self):

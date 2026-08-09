@@ -64,6 +64,15 @@ class EnergyBalanceResult:
     cumulative_deficit_kcal: float  # skumulowany niedobór (tylko pełne dni)
     deficit_risk: str            # niski | średni | wysoki
     daily: list[dict]            # per-day (diagnostyka) + flaga incomplete
+    # --- faza 6.2d: jawna jakość danych bilansu ---
+    # Nie tylko cicho wyłączamy niekompletne dni — jawnie sygnalizujemy, że
+    # ocena bilansu opiera się na niepełnych danych (data_quality obniżona).
+    data_quality: str = "high"   # high | medium | low
+    data_quality_notes: list[str] = None  # powody obniżenia (np. niekompletne dni)
+
+    def __post_init__(self):
+        if self.data_quality_notes is None:
+            self.data_quality_notes = []
 
 
 def compute_energy_balance(
@@ -164,7 +173,41 @@ def compute_energy_balance(
         cumulative_deficit_kcal=round(cumulative, 0),
         deficit_risk=risk,
         daily=daily,
+        **classify_balance_data_quality(n_incomplete, n_valid, window),
     )
+
+
+def classify_balance_data_quality(
+    n_incomplete_days: int, n_valid_days: int, window_days: int
+) -> dict:
+    """Jawna jakość danych bilansu energetycznego (faza 6.2d).
+
+    Niekompletne dni (kcal < próg) są już wyłączane z kumulowanego niedoboru;
+    tu dodajemy jawny wskaźnik, że ocena opiera się na niepełnych danych, żeby
+    warstwa wyższa nie prezentowała bilansu jako w pełni wiarygodnego.
+
+    Progi: 0 dni niekompletnych -> high; 1 -> medium; 2+ -> low. Jeśli niepełne
+    dni stanowią większość okna (>50%), status low niezależnie od liczby.
+    """
+    notes: list[str] = []
+    if n_incomplete_days > 0:
+        notes.append(
+            f"{n_incomplete_days} dzień/dni niepełnego logu — wyłączone ze skumulowanego niedoboru"
+        )
+
+    # większość okna niekompletna => ocena mało wiarygodna
+    majority_incomplete = window_days > 0 and n_incomplete_days > window_days / 2
+    if majority_incomplete:
+        notes.append("Większość dni okna to niepełne logi — bilans mało wiarygodny")
+
+    if majority_incomplete or n_incomplete_days >= 2:
+        quality = "low"
+    elif n_incomplete_days == 1:
+        quality = "medium"
+    else:
+        quality = "high"
+
+    return {"data_quality": quality, "data_quality_notes": notes}
 
 
 def classify_deficit_risk(cumulative_deficit_kcal: float) -> str:
@@ -202,6 +245,8 @@ def _insufficient(
         cumulative_deficit_kcal=0.0,
         deficit_risk="niewystarczające dane",
         daily=daily or [],
+        data_quality="low",
+        data_quality_notes=["Brak wystarczających danych do oceny bilansu energetycznego"],
     )
 
 
@@ -220,6 +265,8 @@ def build_energy_balance_output(
         "eaten_mean_kcal": res.eaten_mean_kcal,
         "expenditure_mean_kcal": res.expenditure_mean_kcal,
         "covering_pct": res.covering_pct,
+        "data_quality": res.data_quality,          # faza 6.2d: jawny wskaźnik
+        "data_quality_notes": res.data_quality_notes,
         "cumulative_deficit_kcal": res.cumulative_deficit_kcal,
         "deficit_risk": res.deficit_risk,
         "daily": res.daily,

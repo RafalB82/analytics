@@ -87,6 +87,91 @@ class TestPipeline:
         assert ctx.confidence == {}
 
 
+class TestConfidenceStageNPointsInWindow:
+    """AUDYT: n_points w confidence_stage musi być ograniczone do okna metryki,
+    nie do długości całej dostarczonej serii (payload ma ACWR_LOOKBACK_DAYS=35d,
+    a okno HRV/RHR=14, TDEE=7). Wcześniej len(cała seria) zawyżało completeness
+    i składową 'ilość danych', maskując realne luki."""
+
+    def _energy(self, n: int = 1):
+        from datetime import date, timedelta
+
+        from analytics.nutrition_adaptive import DailyEnergy
+
+        return [
+            DailyEnergy(day=date(2026, 8, 1) + timedelta(days=i), basal_kj=15000.0,
+                        active_kj=4000.0, exercise_min=60.0, stand_min=300.0,
+                        physical_effort=3.0)
+            for i in range(n)
+        ]
+
+    def _ctx(self, hrv_len: int, energy_series, goal_n_days) -> PipelineContext:
+        from datetime import date, timedelta
+
+        from analytics.acwr import SessionLoad
+        from analytics.baseline import MetricPoint
+
+        start = date(2026, 8, 1)
+        hrv = [MetricPoint(day=start + timedelta(days=i), value=50.0) for i in range(hrv_len)]
+        rhr = hrv  # ta sama długość dla RHR
+        ctx = PipelineContext()
+        ctx.models = {
+            "hrv_series": hrv,
+            "rhr_series": rhr,
+            "energy_series": energy_series,
+        }
+        ctx.goal_info = {
+            "status": "ok",
+            "window_days": 7,
+            "n_days": goal_n_days,
+            "tdee_kcal": 2500,
+            "target_kcal": 2500,
+        }
+        # ACWR: pełny, ciągły szereg 28 dni z 5 dniami treningowymi (jak demo)
+        ctx.acwr_info = {
+            "daily_loads": [
+                SessionLoad(day=start + timedelta(days=i), load=1000.0 if i % 6 == 0 else 0.0)
+                for i in range(28)
+            ]
+        }
+        return ctx
+
+    def test_tdee_n_points_from_actual_days_not_full_series(self):
+        """TDEE z serią długości 35 (payload ACWR) i tylko 4 dniami kompletu danych
+        w oknie 7 -> n_points=4, window_days=7 -> completeness < 1.0 (realna luka
+        widoczna), a nie fałszywe 1.0."""
+        from analytics.pipeline import confidence_stage
+
+        ctx = self._ctx(hrv_len=14, energy_series=self._energy(1), goal_n_days=4)
+        confidence_stage(ctx)
+        tdee = ctx.confidence["tdee"]
+        assert tdee["n_points"] == 4
+        assert tdee["window_days"] == 7
+        assert tdee["completeness"] < 1.0  # luka w oknie widoczna, nie maskowana
+
+    def test_hrv_rhr_n_points_capped_to_window(self):
+        """HRV/RHR z serią DŁUŻSZĄ niż okno 14d (payload 35d) -> n_points=14 (okno),
+        nie 35."""
+        from analytics.pipeline import confidence_stage
+
+        # seria 35 punktów -> okno 14
+        ctx = self._ctx(hrv_len=35, energy_series=self._energy(1), goal_n_days=7)
+        confidence_stage(ctx)
+        assert ctx.confidence["hrv"]["n_points"] == 14
+        assert ctx.confidence["rhr"]["n_points"] == 14
+        # n_points nigdy nie przekracza window_days
+        assert ctx.confidence["hrv"]["n_points"] <= ctx.confidence["hrv"]["window_days"]
+
+    def test_tdee_n_points_never_exceeds_window(self):
+        """n_days zgłaszane przez build_goal_output nie może przekroczyć window_days
+        (gdyby goal_info miał zawyżone n_days, cap na okno)."""
+        from analytics.pipeline import confidence_stage
+
+        ctx = self._ctx(hrv_len=14, energy_series=self._energy(1), goal_n_days=99)  # zawyżone
+        confidence_stage(ctx)
+        assert ctx.confidence["tdee"]["n_points"] <= ctx.confidence["tdee"]["window_days"]
+
+
 def test_pipeline_does_not_import_run_analysis():
     """Pipeline (ani żaden jego moduł dziedzinowy) NIE może importować run_analysis.
 

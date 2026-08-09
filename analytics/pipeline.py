@@ -156,21 +156,35 @@ def confidence_stage(ctx: PipelineContext) -> PipelineContext:
     )
 
     confidence: dict[str, dict] = {}
+
+    # n_points musi odzwierciedlać liczbę punktów W OKNIE metryki (ostatnie
+    # window_days dni), NIE długość całej dostarczonej serii. Payload zwykle
+    # obejmuje ACWR_LOOKBACK_DAYS=35 dni (dla okna chronic ACWR), więc len(seria)
+    # regularnie przekracza window_days — zawyżało completeness (cap na 1.0)
+    # i składową 'ilość danych historycznych', maskując realne luki w oknie.
+    # Wzorzec: acwr liczy training_days (faktyczne dni treningowe), nie len(listy).
+    def _points_in_window(vals: list, window: int) -> int:
+        return min(len(vals), window)
+
     c_hrv = conf_mod.compute_confidence(
-        n_points=len(hrv_vals), window_days=14,
+        n_points=_points_in_window(hrv_vals, 14), window_days=14,
         stability=conf_mod.hr_series_stability(hrv_vals),
     )
     if c_hrv:
         confidence["hrv"] = c_hrv.to_dict()
     c_rhr = conf_mod.compute_confidence(
-        n_points=len(rhr_vals), window_days=14,
+        n_points=_points_in_window(rhr_vals, 14), window_days=14,
         stability=conf_mod.hr_series_stability(rhr_vals),
     )
     if c_rhr:
         confidence["rhr"] = c_rhr.to_dict()
     if ctx.goal_info.get("status") == "ok" and n_window and ctx.activity_vals:
+        # TDEE: n_days z build_goal_output = liczba dni FAKTYCZNIE użytych w oknie
+        # (komplet danych). Cap na window_days gwarantuje niezmiennik
+        # n_points <= window_days niezależnie od źródła.
+        tdee_n = min(ctx.goal_info.get("n_days") or n_window, n_window)
         c_tdee = conf_mod.compute_confidence(
-            n_points=len(ctx.activity_vals), window_days=n_window,
+            n_points=tdee_n, window_days=n_window,
             stability=act_stability,
         )
         if c_tdee:

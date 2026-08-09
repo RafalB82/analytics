@@ -50,6 +50,9 @@ class TDEEEstimate:
     active_kcal: float          # średni active / dzień
     window_days: int            # użyte okno (7 lub 28)
     n_days: int                 # ile dni z kompletem danych weszło do średniej
+    window_actual_days: int     # rozpiętość kalendarzowa objęta oknem (od najstarszego
+                                # do najnowszego punktu + 1) — gdy są dziury w danych,
+                                # > window_days i sygnalizuje rozciągnięcie okna
     goal: str                   # "utrzymanie" | "redukcja" | "masa"
     margin_pct: float           # marża % (0 / -0.15 / +0.10)
     target_kcal: float          # tdee + marża → CEL KALORYCZNY
@@ -106,6 +109,12 @@ def compute_tdee(
     # wybierz ostatnie `window` dni
     recent = energy_series[-window:]
 
+    # Rozpiętość kalendarzowa okna: od najstarszego do najnowszego punktu + 1.
+    # Jeśli w danych są dziury, `recent` zawiera `window` punktów rozciągniętych
+    # na więcej dni kalendarzowych — window_actual_days > window_days i jawnie
+    # sygnalizuje, że średnia NIE pokrywa window_days kalendarzowych dni.
+    span = ((recent[-1].day - recent[0].day).days + 1) if recent else 0
+
     basal = [d.basal_kj for d in recent if d.basal_kj is not None]
     active = [d.active_kj for d in recent if d.active_kj is not None]
     if not basal or not active:
@@ -142,6 +151,7 @@ def compute_tdee(
         active_kcal=round(active_kcal, 0),
         window_days=window,
         n_days=len(recent),
+        window_actual_days=span,
         goal=goal,
         margin_pct=margin,
         target_kcal=target,
@@ -207,6 +217,7 @@ def build_goal_output(energy_series, weight_info: dict, params: dict) -> dict:
             "target_kcal": long_est.target_kcal,
             "window_days": long_est.window_days,
             "n_days": long_est.n_days,
+            "window_actual_days": long_est.window_actual_days,
         }
 
     logger.info("CEL: %s -> target=%.0f kcal (TDEE 7d), long28: %s",
@@ -220,6 +231,7 @@ def build_goal_output(energy_series, weight_info: dict, params: dict) -> dict:
         "active_kcal": est.active_kcal,
         "window_days": est.window_days,
         "n_days": est.n_days,
+        "window_actual_days": est.window_actual_days,
         "margin_pct": est.margin_pct,
         "target_kcal": est.target_kcal,
         "protein_g": est.protein_g,

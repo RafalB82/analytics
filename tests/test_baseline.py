@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+import pytest
+
 from analytics.baseline import (
     BaselineResult,
     MetricPoint,
@@ -62,6 +64,55 @@ class TestComputeEwmaBaseline:
         assert res.baseline == 55.0
         assert res.deviation_pct == 0.0
         assert res.deviation_abs == 0.0
+
+    def test_constant_series_converges_to_that_value(self):
+        """Sanity: baseline na stałym szeregu zbiega do tej wartości (regresja
+        dla cold-start fix — patrz test_deviation_independent_of_which_day_starts)."""
+        res = compute_ewma_baseline(_series([50.0] * 8))
+        assert res is not None
+        assert res.baseline == pytest.approx(50.0, abs=0.1)
+
+    def test_deviation_independent_of_which_day_starts_window(self):
+        """AUDYT fix: identyczna rutyna HRV/RHR różniąca się tylko fazą (czy okno
+        zaczyna się dniem wysokim czy niskim) musi dać zbliżone deviation_pct —
+        nie zależne od przypadkowego pierwszego dnia okna.
+
+        Stary kod (seed=values[0]) dawał ~6 pkt proc. różnicy na identycznym
+        szeregu — to bezpośrednio fałszowało scoring gotowości, bo deviation_pct
+        wchodzi do readiness_integration (strefa zielona/żółta/czerwona). Ten sam
+        cold-start bug, który w acwr.py naprawiono w commicie 38167ef."""
+        # 6 punktów historii na zmianę 45/40 (rutyna), current stały 44.5.
+        # Seria A zaczyna okno dniem wysokim (45), seria B dniem niskim (40).
+        hist_a = [45.0, 40.0, 45.0, 40.0, 45.0, 40.0]
+        hist_b = [40.0, 45.0, 40.0, 45.0, 40.0, 45.0]
+        cur = 44.5
+
+        a = compute_ewma_baseline(_series(hist_a + [cur]), min_points=6)
+        b = compute_ewma_baseline(_series(hist_b + [cur]), min_points=6)
+        assert a is not None and b is not None
+        # rutyna identyczna, różnica tylko fazy o 1 dzień -> mała różnica.
+        # Stary kod (seed=values[0]) dawał tu ~6.25 pkt proc. rozjazdu; po fixie
+        # (seed=średnia okna) resztkowa zależność fazowa jest tylko resztą z
+        # samej metody EWMA na krótkim oknie. Próg 1.5 pkt proc. jest ~4x
+        # ostrzejszy niż stary bug.
+        assert abs(a.deviation_pct - b.deviation_pct) < 1.5
+
+    def test_fresh_elevation_not_masked_by_seed(self):
+        """AUDYT fix: świeże podwyższenie HRV w ostatnich dniach okna musi dać
+        wyższy baseline niż to samo podwyższenie tylko na początku okna (EWMA
+        z natury waży nowsze dane mocniej). Stary seed=values[0] zacierał ten
+        sygnał, bo pierwszy punkt dostawał wagę nieproporcjonalną do alpha."""
+        # 7 punktów historii: A = podwyższenie na końcu, B = na początku.
+        vals_recent = [40.0] * 4 + [45.0] * 3   # podwyższenie świeże (koniec okna)
+        vals_old = [45.0] * 3 + [40.0] * 4      # podwyższenie wygasłe (początek okna)
+        cur = 44.0
+
+        recent = compute_ewma_baseline(_series(vals_recent + [cur]), min_points=6)
+        old = compute_ewma_baseline(_series(vals_old + [cur]), min_points=6)
+        assert recent is not None and old is not None
+        # świeże podwyższenie musi dać wyższy baseline niż wygasłe (EWMA waży
+        # nowsze dane mocniej; stary seed=values[0] zacierał tę różnicę)
+        assert recent.baseline > old.baseline
 
 
 class TestComputeTrendSlope:

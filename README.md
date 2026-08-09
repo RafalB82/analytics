@@ -153,6 +153,13 @@ kcal — ryzyko niedoboru), `baseline_trends` (HRV/RHR trend + R²), `inputs`
 - **Cel kaloryczny z aktywności** (nie z MFP): TDEE = średnie basal+active z okna
   (aktywne 7d, porównawcze 28d) z Apple; cel = TDEE + marża % wg `phase`. MFP
   rejestruje jedzenie, ale nie wyznacza celu.
+- **Luki w danych a okno TDEE.** `window_actual_days` raportuje rozpiętość
+  kalendarzową objętą oknem (od najstarszego do najnowszego punktu + 1). Gdy Apple
+  Health ma dziury w danych, `window_days=7` może oznaczać 7 punktów rozciągniętych
+  na więcej dni kalendarzowych — sprawdzaj `window_actual_days > window_days` i
+  traktuj średnią jako mniej reprezentatywną dla „tygodnia" w takim przypadku
+  (nie zgadujemy, czy dziura to celowy post, czy brak zapisu — tylko jawnie
+  sygnalizujemy rozjazd).
 - **Waga — dwa niezależne źródła.** Punkt kontrolny z Apple (`weight_body_mass`, w dni
   ważenia) służy do białka i TDEE; osobno `mfp_weight` (opcjonalne) służy wyłącznie do
   `weight_trend` (rolling median + slope). Bez wagi z Apple cel kaloryczny i tak działa
@@ -168,5 +175,11 @@ kcal — ryzyko niedoboru), `baseline_trends` (HRV/RHR trend + R²), `inputs`
 
 ## Jakość / CI
 
-- 249 testów (jednostkowe + integracyjne)
+- **299 testów** (jednostkowe + integracyjne) — `pytest`
+- Coverage `analytics/`: **~90%** (line) — `pytest --cov=analytics`
+- Coverage `mcp_fetchers/`: częściowy — testowane są tylko `mfp_normalize` (63%);
+  `fetch_mcp.py` / `build_input.py` / `apple_normalize` / `hevy_normalize` nie mają
+  jeszcze skryptów testowych w `tests/` (to warstwa pobierania z MCP — offline
+  testowalna, ale wymaga mockowania transportu). Wyraźnie odnotowane, żeby liczba
+  nie wyglądała na niedopilnowaną.
 - Ruff + mypy czyste; GitHub Actions: Ruff i mypy na 3.12, pytest+coverage na 3.10/3.12/3.13

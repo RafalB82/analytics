@@ -107,6 +107,55 @@ class TestComputeTdee:
         est = compute_tdee(_energy(basal, active), goal="utrzymanie", window_days=3)
         assert est.window_days == 3
 
+    def test_contiguous_window_actual_matches_window(self):
+        """Seria ciągła (bez dziur): rozpiętość kalendarzowa okna == window_days."""
+        est = compute_tdee(_energy(values_basal=[15000.0] * 7, values_active=[4000.0] * 7),
+                           goal="utrzymanie", window_days=7)
+        assert est.window_days == 7
+        assert est.n_days == 7
+        assert est.window_actual_days == 7
+
+    def test_gap_in_series_reported_as_actual_days(self):
+        """AUDYT fix: `energy_series[-window:]` bierze N OSTATNICH PUNKTÓW, nie N dni
+        kalendarzowych. Gdy Apple Health ma dziury w danych, „window_days=7" kłamie —
+        realnie okno mogło być rozciągnięte na 10+ dni.
+
+        Seria: 7 punktów energii rozłożonych na 12 dni kalendarzowych (dziury między
+        nimi). window_days muszą zgłosić 7 punktów, ale window_actual_days jawnie
+        sygnalizują, że okno objęło 12 dni kalendarzowych."""
+        start = date(2026, 8, 1)
+        # dni z danymi: 1, 3, 5, 7, 9, 11, 12 -> 7 punktów na 12-dniowym zakresie
+        gap_days = [start + timedelta(days=i) for i in (0, 2, 4, 6, 8, 10, 11)]
+        series = [
+            DailyEnergy(day=d, basal_kj=15000.0, active_kj=4000.0,
+                        exercise_min=60.0, stand_min=300.0, physical_effort=3.0)
+            for d in gap_days
+        ]
+        est = compute_tdee(series, goal="utrzymanie", window_days=7)
+        assert est.window_days == 7
+        assert est.n_days == 7
+        # rozpiętość: dzień 1..12 -> 12 dni kalendarzowych, nie 7
+        assert est.window_actual_days == 12
+        assert est.window_actual_days > est.window_days
+
+    def test_gap_reported_through_build_goal_output(self):
+        """window_actual_days dociera do outputu build_goal_output (kontekst dla LLM)
+        i do porównawczego long_window_28d."""
+        start = date(2026, 8, 1)
+        gap_days = [start + timedelta(days=i) for i in (0, 2, 4, 6, 8, 10, 11, 12, 14, 16)]
+        series = [
+            DailyEnergy(day=d, basal_kj=15000.0, active_kj=4000.0,
+                        exercise_min=60.0, stand_min=300.0, physical_effort=3.0)
+            for d in gap_days
+        ]
+        out = build_goal_output(series, {"present": False}, {"phase": "utrzymanie"})
+        assert out["status"] == "ok"
+        assert out["window_actual_days"] > out["window_days"]
+        # long_window_28d: rozpiętość jest raportowana jawnie; tu zakres danych (17d)
+        # < żądane 28d, więc actual < window — chodzi o to, że pole w ogóle wyszło
+        assert out["long_window_28d"] is not None
+        assert out["long_window_28d"]["window_actual_days"] > 0
+
 
 class TestComputeLongWindowTdee:
     def test_returns_none_with_too_few(self):

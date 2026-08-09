@@ -408,14 +408,19 @@ def build_acwr(
         from .apple_cardio import build_apple_cardio_series
         cardio_series = build_apple_cardio_series(apple_workouts, start, target)
         cardio_res = build_cardio_acwr(cardio_series)
-        # cardio_7d: suma TRIMP + liczba sesji z ostatnich 7 dni (okno acute).
-        # Przy "szarpanym" cardio (nieregularne, ale mocne) to realny sygnał
-        # wpływu na bieżący blok tygodniowy — ważniejszy niż chronic/ratio,
-        # które przy rzadkich sesjach zawsze będą zaniżone. Dni bez cardio = 0.
+        # cardio_7d: obciążenie cardio z ostatnich 7 dni (okno acute).
+        # cardio_7d_total = suma TRIMP (całkowita objętość, lekka + mocna).
+        # cardio_7d_days = dni z JAKIMKOLWIEK TRIMP (ruch uzupełniający wliczony).
+        # cardio_7d_sessions = MOCNE sesje (TRIMP >= cardio_strong_trimp_floor) —
+        #   to realny sygnał "ile mocnego cardio wpadło w tydzień" (model: mocne,
+        #   submaksymalne cardio obciąża blok; lekki ruch nie). Dni bez cardio = 0.
         acute_start = target - timedelta(days=settings.ACWR.acute_window - 1)
         cardio_7d = sum(s.load for s in cardio_series if s.day >= acute_start)
+        strong_floor = settings.ACWR.cardio_strong_trimp_floor
         cardio_7d_sessions = sum(1 for s in cardio_series
-                                 if s.day >= acute_start and s.load > 0)
+                                 if s.day >= acute_start and s.load >= strong_floor)
+        cardio_7d_days = sum(1 for s in cardio_series
+                             if s.day >= acute_start and s.load > 0)
         gap_cardio = detect_training_gap(cardio_series, target)
         cardio_detail = {
             "acute": cardio_res.acute_load,
@@ -423,8 +428,9 @@ def build_acwr(
             "ratio": cardio_res.ratio,
             "zone": cardio_res.zone,
             "n_cardio_days": sum(1 for s in cardio_series if s.load > 0),
-            "cardio_7d_total": round(cardio_7d, 1),      # TRIMP w ostatnich 7d
-            "cardio_7d_sessions": cardio_7d_sessions,     # ile mocnych sesji w 7d
+            "cardio_7d_total": round(cardio_7d, 1),      # TRIMP w ostatnich 7d (lekka+mocna)
+            "cardio_7d_days": cardio_7d_days,             # dni z jakimkolwiek cardio w 7d
+            "cardio_7d_sessions": cardio_7d_sessions,     # MOCNE sesje (TRIMP>=próg) w 7d
         }
 
     # luka łączona: bierz tor, który faktycznie wykrył przerwę i akurat dziś

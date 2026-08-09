@@ -56,13 +56,14 @@ class EnergyBalanceResult:
 
     status: str                  # ok | niewystarczające dane
     n_valid_days: int            # dni z kompletnym bilansem w oknie
+    n_incomplete_days: int       # dni niepełnego logu (kcal < próg) — nie liczone w niedoborze
     window_days: int
-    eaten_mean_kcal: float       # średnie zjedzone / dzień
+    eaten_mean_kcal: float       # średnie zjedzone / dzień (tylko pełne dni)
     expenditure_mean_kcal: float # średni wydatek / dzień (stały = TDEE_ref)
     covering_pct: float          # eaten/expenditure * 100
-    cumulative_deficit_kcal: float  # skumulowany niedobór w oknie
+    cumulative_deficit_kcal: float  # skumulowany niedobór (tylko pełne dni)
     deficit_risk: str            # niski | średni | wysoki
-    daily: list[dict]            # per-day (diagnostyka)
+    daily: list[dict]            # per-day (diagnostyka) + flaga incomplete
 
 
 def compute_energy_balance(
@@ -98,22 +99,33 @@ def compute_energy_balance(
         recent = [e for e in recent if date.fromisoformat(str(e["day"])[:10]) >= cutoff]
 
     n_valid = 0
+    n_incomplete = 0
     cumulative = 0.0
     eaten_sum = 0.0
     daily: list[dict] = []
+    # niepełny log: kcal < wydatek * frac (np. wydatek 2500, frac 0.5 -> próg 1250).
+    # Dzień z mniej niż połową wydatku to niemal na pewno niepełny log (wyjazd/
+    # weekend/problemy z notowaniem), nie celowy post — nie liczymy go do niedoboru.
+    floor = expenditure_kcal * settings.ENERGY_BALANCE.incomplete_frac_of_expenditure
     for e in recent:
         kcal = e.get("kcal")
         if kcal is None:
             continue
-        bal = float(kcal) - expenditure_kcal
-        cumulative += bal
-        eaten_sum += float(kcal)
-        n_valid += 1
+        kcal_f = float(kcal)
+        bal = kcal_f - expenditure_kcal
+        incomplete = kcal_f < floor
+        if incomplete:
+            n_incomplete += 1
+        else:
+            cumulative += bal
+            eaten_sum += kcal_f
+            n_valid += 1
         daily.append({
             "day": str(e.get("day"))[:10],
-            "eaten_kcal": round(float(kcal), 0),
+            "eaten_kcal": round(kcal_f, 0),
             "expenditure_kcal": round(expenditure_kcal, 0),
             "balance_kcal": round(bal, 0),
+            "incomplete": incomplete,
         })
 
     if n_valid < min_valid:
@@ -124,15 +136,16 @@ def compute_energy_balance(
     risk = classify_deficit_risk(cumulative)
 
     logger.info(
-        "energiabalans: %d ważnych dni/%d okno, śr.zjedzone=%.0f vs wydatek=%.0f "
-        "(%.0f%% pokrycia), skumulowany niedobór=%.0f kcal -> %s",
-        n_valid, window, eaten_mean, expenditure_kcal, covering,
+        "energiabalans: %d pełnych + %d niepełnych dni/%d okno, śr.zjedzone=%.0f "
+        "vs wydatek=%.0f (%.0f%% pokrycia), skumulowany niedobór=%.0f kcal -> %s",
+        n_valid, n_incomplete, window, eaten_mean, expenditure_kcal, covering,
         cumulative, risk,
     )
 
     return EnergyBalanceResult(
         status="ok",
         n_valid_days=n_valid,
+        n_incomplete_days=n_incomplete,
         window_days=window,
         eaten_mean_kcal=round(eaten_mean, 0),
         expenditure_mean_kcal=round(expenditure_kcal, 0),
@@ -170,6 +183,7 @@ def _insufficient(
     return EnergyBalanceResult(
         status="niewystarczające dane",
         n_valid_days=n_valid,
+        n_incomplete_days=0,
         window_days=window,
         eaten_mean_kcal=0.0,
         expenditure_mean_kcal=0.0,
@@ -191,6 +205,7 @@ def build_energy_balance_output(
         "status": res.status,
         "window_days": res.window_days,
         "n_valid_days": res.n_valid_days,
+        "n_incomplete_days": res.n_incomplete_days,
         "eaten_mean_kcal": res.eaten_mean_kcal,
         "expenditure_mean_kcal": res.expenditure_mean_kcal,
         "covering_pct": res.covering_pct,

@@ -5,7 +5,7 @@ from datetime import date, timedelta
 
 import pytest
 
-from analytics.acwr import acwr_readiness_modifier, build_cardio_acwr
+from analytics.acwr import acwr_readiness_modifier, build_acwr, build_cardio_acwr
 from analytics.apple_cardio import (
     apple_workout_daily_load,
     build_apple_cardio_series,
@@ -254,3 +254,29 @@ class TestBuildCardioAcwr:
         # tylko dzień z rowerem ma load>0; siłownia z Apple odrzucona
         assert loads[today - timedelta(days=1)] > 0
         assert loads[today - timedelta(days=2)] == 0
+
+
+class TestCardio7dStrongSessions:
+    """cardio_7d_sessions liczy MOCNE sesje (TRIMP >= próg), nie dni z ruchem."""
+
+    def test_strong_vs_all_days(self):
+        today = date(2026, 8, 9)
+        # 3 mocne (pon/śr/pt: TRIMP 149/190/210) + 1 lekka (wt: rowing 5.6min -> ~35)
+        workouts = [
+            {"name": "Outdoor Cycling", "start": "2026-08-04T17:00:00",
+             "duration_min": 71.5, "avg_heart_rate_bpm": 146.8, "max_heart_rate_bpm": 176.0},
+            {"name": "Rowing", "start": "2026-08-05T19:00:00",
+             "duration_min": 5.6, "avg_heart_rate_bpm": 133.9, "max_heart_rate_bpm": 150.0},
+            {"name": "Outdoor Cycling", "start": "2026-08-06T17:00:00",
+             "duration_min": 88.2, "avg_heart_rate_bpm": 143.5, "max_heart_rate_bpm": 170.0},
+            {"name": "Outdoor Cycling", "start": "2026-08-08T16:00:00",
+             "duration_min": 150.1, "avg_heart_rate_bpm": 136.9, "max_heart_rate_bpm": 183.0},
+        ]
+        res = build_acwr([], today, apple_workouts=workouts)
+        card = res.get("cardio_detail")
+        assert card is not None
+        # 4 dni z ruchem, ale tylko 3 MOCNE (lekki wtorek TRIMP ~35 < próg)
+        assert card["cardio_7d_days"] == 4
+        assert card["cardio_7d_sessions"] == 3
+        # wszystkie cardio_7d_total większe niż sama suma mocnych (wlicza lekką)
+        assert card["cardio_7d_total"] > 0

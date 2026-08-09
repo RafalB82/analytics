@@ -123,6 +123,8 @@ class AnalysisReport(BaseModel):
     activity_stability: dict | None = None
     #: Faza 9 — Explainability: {metric_name: [reason, ...]}
     explanations: dict[str, list[str]] | None = None
+    #: Bilans energetyczny (wydatek vs zjedzone kcal) — ocena ryzyka niedoboru
+    energy_balance: dict | None = None
 
 
 __all__ = [

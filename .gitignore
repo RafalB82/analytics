@@ -11,3 +11,8 @@ htmlcov/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+# bufory pośrednie mcp_fetchers (konwersja MCP -> analytics)
+tmp/
+
+# legacy bootstrap (dane osobiste wklejone na sztywno) — zostaje lokalnie, nie do repo
+build_and_run.py

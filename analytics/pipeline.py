@@ -46,6 +46,7 @@ class PipelineContext:
     cardio_sessions: list = field(default_factory=list)
     apple_workouts: list = field(default_factory=list)
     mfp_weight: list = field(default_factory=list)
+    mfp_daily_kcal: list = field(default_factory=list)  # zjedzone kcal z MFP diary
     apple_temp: list = field(default_factory=list)
 
     # modele / serie (ModelBuilding)
@@ -55,6 +56,7 @@ class PipelineContext:
     # wyniki (Analytics / Confidence / Serialization)
     readiness: Any = None
     goal_info: dict = field(default_factory=dict)
+    energy_balance: dict = field(default_factory=dict)
     temp_alert: Any = None
     trend_hrv: Any = None
     trend_rhr: Any = None
@@ -106,11 +108,21 @@ def analytics_stage(ctx: PipelineContext) -> PipelineContext:
         sleep_hours_today=m["sleep_hours_today"],
         acwr_result=ctx.acwr_info["result"],
         cardio_acwr=ctx.acwr_info.get("cardio"),
+        cardio_7d_sessions=(ctx.acwr_info.get("cardio_detail") or {}).get("cardio_7d_sessions", 0),
         temp_alert=ctx.temp_alert,
         spo2_confirmed=False,
         gap=ctx.acwr_info.get("gap"),
     )
     ctx.goal_info = nutr_mod.build_goal_output(m["energy_series"], m["weight_info"], ctx.params)
+
+    # bilans energetyczny: zjedzone kcal (MFP) vs wydatek (target_kcal z TDEE).
+    # Kumulujący się niedobór = sygnał ryzyka urazu/infekcji (patrz energy_balance).
+    from . import energy_balance as eb_mod
+    target_kcal = ctx.goal_info.get("target_kcal") if ctx.goal_info.get("status") == "ok" else None
+    ctx.energy_balance = eb_mod.build_energy_balance_output(
+        ctx.mfp_daily_kcal, target_kcal,
+    ) if target_kcal else {"status": "skipped", "reason": "brak target_kcal (TDEE niedostępny)"}
+
     ctx.trend_hrv = baseline_mod.compute_trend_slope(m["hrv_series"])
     ctx.trend_rhr = baseline_mod.compute_trend_slope(m["rhr_series"])
     return ctx
@@ -232,6 +244,7 @@ def serialization_stage(ctx: PipelineContext) -> PipelineContext:
         },
         temperature=temp_mod.serialize_temp_output(ctx.temp_alert, m["temp_series"], ctx.target),
         nutrition=ctx.goal_info,
+        energy_balance=ctx.energy_balance or None,
         baseline_trends={
             "hrv": (asdict(ctx.trend_hrv) if ctx.trend_hrv else None),
             "rhr": (asdict(ctx.trend_rhr) if ctx.trend_rhr else None),

@@ -84,6 +84,24 @@ class ACWRSettings:
     #: override w komunikacie) zamiast "krótka".
     gap_long_days: int = 14
 
+    #: minimalna liczba dni z obciążeniem (load>0) w oknie chronic, aby RATIO
+    #: cardio był wiarygodny do klasyfikacji strefy ryzyka. Użytkownik ma cardio
+    #: "szarpane" (nieregularne, ale mocne/submaksymalne) — ratio przy rzadkich
+    #: sesjach jest zawsze zaniżone chronic i fałszuje w górę (np. 3.32 z 4 sesji).
+    #: Dlatego próg jest WYSOKI (regularne cardio przez ~2 tyg.): poniżej niego
+    #: ratio NIE karze w readiness (strefa "niewystarczające dane"), a realny
+    #: sygnał obciążenia cardio bierze cardio_7d (liczba mocnych sesji w tygodniu).
+    cardio_min_valid_days: int = 12
+
+    #: próg liczby mocnych sesji cardio w oknie acute (7d) do karencji w gotowości.
+    #: 0 = brak karencji cardio; kara rośnie z liczbą mocnych sesji w tygodniu
+    #: (np. 1 sesja = +0, 2 = +1, 3+ = +2). To realny sygnał "ile mocnego cardio
+    #: wpadło w ten tydzień" — przy nieregularnym cardio ważniejszy niż ratio.
+    cardio_7d_penalty_thresholds: tuple[int, int] = (2, 3)
+
+    #: nazwa strefy dla ACWR cardio z za małą próbką (nie jest strefą ryzyka)
+    zone_insufficient: str = "niewystarczające dane"
+
 
 # --- Temperatura nadgarstka --------------------------------------------------
 
@@ -146,6 +164,35 @@ class NutritionSettings:
     protein_g_per_kg: dict = field(
         default_factory=lambda: {"deficyt": 2.2, "utrzymanie": 1.8, "nadwyżka": 1.8}
     )
+
+
+# --- Bilans energetyczny (wydatek vs zjedzone) ------------------------------
+
+
+@dataclass(frozen=True)
+class EnergyBalanceSettings:
+    """Ocena zaspokojenia wydatku energetycznego przez dostarczone kcal.
+
+    TDEE (wydatek) liczony z aktywności Apple; zjedzone kcal z MFP. Kumulujący
+    się niedobór (zjedzone < wydatek) przez kilka dni upośledza regenerację
+    i zwiększa ryzyko kontuzji/urazu/infekcji — to celowe powiązanie.
+    """
+
+    #: okno oceny bilansu (dni wstecz od targetu)
+    balance_window_days: int = 7
+    #: ile dni z kompletem (zjedzone+wydatek) potrzeba, żeby ocena była wiarygodna
+    min_valid_days: int = 3
+
+    #: skumulowany niedobór (kcal) w oknie do strefy ryzyka.
+    #: (niedobór_średni, niedobór_wysoki): poniżej = niski, powyżej = wysoki.
+    #: ~7700 kcal/kg fat -> 1500-2000 kcal/tydz to wyraźny deficyt; >= 3500
+    #: (~0.45 kg/tydz) przy obciążeniu treningowym to realny sygnał ryzyka.
+    deficit_low_kcal: int = 1500
+    deficit_high_kcal: int = 3500
+
+    #: czy uwzględniać cel (marżę) — jeśli target_kcal < tdee (redukcja), ocena
+    #: niedoboru względem celu jest łagodniejsza niż względem surowego TDEE.
+    compare_against_target: bool = True
 
 
 # --- Readiness (finalny scoring) --------------------------------------------
@@ -245,6 +292,7 @@ BASELINE = BaselineSettings()
 ACWR = ACWRSettings()
 TEMPERATURE = TemperatureSettings()
 NUTRITION = NutritionSettings()
+ENERGY_BALANCE = EnergyBalanceSettings()
 READINESS = ReadinessSettings()
 CONFIDENCE = ConfidenceSettings()
 STABILITY = StabilitySettings()
@@ -255,6 +303,7 @@ __all__ = [
     "ACWRSettings",
     "TemperatureSettings",
     "NutritionSettings",
+    "EnergyBalanceSettings",
     "ReadinessSettings",
     "ConfidenceSettings",
     "StabilitySettings",
@@ -263,6 +312,7 @@ __all__ = [
     "ACWR",
     "TEMPERATURE",
     "NUTRITION",
+    "ENERGY_BALANCE",
     "READINESS",
     "CONFIDENCE",
     "STABILITY",

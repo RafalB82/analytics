@@ -38,6 +38,7 @@ MFP (zjedzone kalorie/jedzenie) ─────────┘
 - `baseline.py` — baseline EWMA + trend + detekcja przesunięcia normy
 - `acwr.py` — Acute:Chronic Workload Ratio (Gabbett 2016), osobno siła (Hevy) i cardio (Apple)
 - `apple_cardio.py` — klasyfikacja sesji cardio z Apple Watch + TRIMP
+- `energy_balance.py` — bilans wydatek vs zjedzone kcal (ryzyko urazu/infekcji)
 - `temperature.py` — alert temperatury nadgarstka (twardy override) + potwierdzenie SpO₂
 - `nutrition_adaptive.py` — cel kaloryczny (TDEE z aktywności + marża wg celu), białko, trend wagi
 - `readiness_integration.py` — finalny scoring gotowości + strefa
@@ -47,6 +48,8 @@ MFP (zjedzone kalorie/jedzenie) ─────────┘
 - `pipeline.py` — orkiestracja (5 stage'ów: InputValidation → ModelBuilding → Analytics → Confidence/Explain → Serialization)
 - `fetch_*.py` — konwersja danych z MCP na serie analityczne
 - `run_analysis.py` — cienki CLI/orchestrator (wejście JSON → wyjście JSON)
+- `mcp_fetchers/` — warstwa POBIERANIA z MCP (Hevy/Apple/MFP) + konwersja formatu
+  (patrz `mcp_fetchers/README.md` oraz `docs/ARCHITECTURE.md` — mapa warstw)
 - `tests/` — testy jednostkowe + integracyjne · `docs/` — dokumentacja
 
 ## Uruchomienie
@@ -79,6 +82,9 @@ python -m analytics.run_analysis '<json>'  # ręczny orchestrator
   ],
   "cardio_sessions": [ /* legacy, ręczne {"startTime","duration_minutes","rpe"} */
     {"startTime": "2026-08-05T08:00:00", "duration_minutes": 90, "rpe": 6}
+  ],
+  "mfp_daily_kcal": [ /* zjedzone kcal z MFP diary: {day, kcal} — dla energy_balance */
+    {"day": "2026-08-06", "kcal": 2603.0}
   ],
   "mfp_weight": [ /* opcjonalne, punkty wagi z MFP — tylko do trendu wagi */
     {"date": "2026-08-07", "value": 71.2}
@@ -116,8 +122,9 @@ python -m analytics.run_analysis '<json>'  # ręczny orchestrator
 
 Sekcje (z `AnalysisReport`, Pydantic v2): `readiness` (strefa/RPE/objętość),
 `acwr` (acute/chronic/ratio/zone), `acwr_detail` (acute_7d, chronic_28d_ewma,
-rpe_coverage, cardio, daily_loads_last14), `temperature`, `nutrition` (cel
-kaloryczny z aktywności), `baseline_trends` (HRV/RHR trend + R²), `inputs`
+rpe_coverage, cardio + `cardio_7d_sessions`, daily_loads_last14), `temperature`,
+`nutrition` (cel kaloryczny z aktywności), `energy_balance` (wydatek vs zjedzone
+kcal — ryzyko niedoboru), `baseline_trends` (HRV/RHR trend + R²), `inputs`
 (ile punktów użyto) — plus sekcje pomocnicze, obecne gdy dane wystarczają:
 - `confidence` — Confidence Score per metryka (hrv/rhr/tdee/acwr): punkty, stabilność, okno
 - `weight_trend` — trend wagi (roll. median + slope), tylko gdy podano `mfp_weight`
@@ -143,12 +150,21 @@ kaloryczny z aktywności), `baseline_trends` (HRV/RHR trend + R²), `inputs`
   przekazywana jest twardo jako `False` (konfiguracja po stronie warstwy zbierającej).
 - `run_analysis` wymaga min. 6 punktów HRV do baseline (EWMA).
 - **Cel kaloryczny z aktywności** (nie z MFP): TDEE = średnie basal+active z okna
+- **Cel kaloryczny z aktywności** (nie z MFP): TDEE = średnie basal+active z okna
   (aktywne 7d, porównawcze 28d) z Apple; cel = TDEE + marża % wg `phase`. MFP
   rejestruje jedzenie, ale nie wyznacza celu.
 - **Waga — dwa niezależne źródła.** Punkt kontrolny z Apple (`weight_body_mass`, w dni
   ważenia) służy do białka i TDEE; osobno `mfp_weight` (opcjonalne) służy wyłącznie do
   `weight_trend` (rolling median + slope). Bez wagi z Apple cel kaloryczny i tak działa
   (z samej aktywności); bez `mfp_weight` po prostu nie ma sekcji `weight_trend`.
+- **Cardio ACWR** przy nieregularnym cardio jest oznaczany „niewystarczające dane"
+  (za mało dni w chronic), a realną karę gotowości niesie `cardio_7d_sessions`
+  (ile mocnych sesji w tygodniu). Nie interpretuj ratio cardio jako ryzyka,
+  gdy strefa to „niewystarczające dane".
+- **Bilans energetyczny** (`energy_balance`): bez danych MFP (zjedzone kcal)
+  sekcja zwraca „niewystarczające dane" — nie raportuj ryzyka niedoboru bez
+  realnych kcal. Przy min. 3 ważnych dniach w oknie 7d liczy pokrycie wydatku
+  i skumulowany niedobór (próg ryzyka w `config.ENERGY_BALANCE`).
 
 ## Jakość / CI
 

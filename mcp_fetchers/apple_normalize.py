@@ -49,10 +49,6 @@ CARDIO_NAMES = (
     "elliptical", "stepper", "stair", "treadmill", "cardio", "ergometer",
 )
 
-# Set id workoutów już przepuszczonych — do dedupe zdublowanych kopii tej samej
-# sesji (Apple zgłasza `deduped_copies` > 1). Resetowany w main(), żeby każde
-# uruchomienie było czyste (determinizm/idempotencja).
-_SEEN_IDS: set[str] = set()
 
 
 def _keep_energy(v) -> float | None:
@@ -97,20 +93,27 @@ def is_cardio(workout: dict) -> bool:
     return any(kw in name for kw in CARDIO_NAMES)
 
 
-def normalize_workout(w: dict) -> dict | None:
+def normalize_workout(w: dict, seen_ids: set[str] | None = None) -> dict | None:
     """Workout z apple__list_recent_workouts -> format analytics (tylko cardio).
 
     Dedupe po `id`: surowe dane Apple mogą zawierać zdublowane kopie tej samej
     sesji (pole `deduped_copies` > 1). Skrypt przepuszcza tylko pierwszą kopię
     per id — reszta to artefakt, nie osobne treningi.
+
+    seen_ids: opcjonalny set id już przepuszczonych w bieżącym przebiegu.
+    Gdy None (domyślnie), funkcja używa ŚWIEŻEGO setu lokalnego — deterministyczna,
+    niezależna od wywołań poprzednich. Gdy chcesz deduplikować w obrębie JEDNEGO
+    przebiegu (np. pętla po wszystkich workoutach w main()/_run_analysis),
+    przekaż wspólny set jawnie.
     """
     if not is_cardio(w):
         return None
+    dedupe = seen_ids if seen_ids is not None else set()
     w_id = w.get("id")
     if w_id is not None:
-        if w_id in _SEEN_IDS:
+        if w_id in dedupe:
             return None
-        _SEEN_IDS.add(w_id)
+        dedupe.add(w_id)
     avg = w.get("avg_heart_rate_bpm")
     if avg is None:
         return None
@@ -144,9 +147,9 @@ def main() -> int:
         return 1
 
     apple_daily = [normalize_daily_point(d) for d in (data.get("daily") or [])]
-    _SEEN_IDS.clear()  # czysty dedupe per uruchomienie
     apple_temp = [x for x in (normalize_temp_point(p) for p in (data.get("temp") or [])) if x]
-    apple_workouts = [x for x in (normalize_workout(w) for w in (data.get("workouts") or [])) if x]
+    seen: set[str] = set()
+    apple_workouts = [x for x in (normalize_workout(w, seen) for w in (data.get("workouts") or [])) if x]
     # sortuj cardio chronologicznie (list_recent_workouts zwraca najnowsze pierwszy)
     apple_workouts.sort(key=lambda w: (w.get("start") or ""))
 

@@ -30,13 +30,23 @@ SKIP_SET_TYPES = {"warmup"}
 DISTANCE_BASED = False
 
 
-def _parse_date(iso: Any) -> date:
-    """ISO 8601 (z 'Z' lub offset) -> date. Bezpiecznie dla endTime/null."""
+def _parse_date(iso: Any) -> date | None:
+    """ISO 8601 (z 'Z' lub offset) -> date. Bezpiecznie dla endTime/null.
+
+    Zwraca None gdy brak daty lub niezdatny format — NIE domyślna data.today().
+    Trening bez sensownego startupu nie może trafić na "dziś" (fałszowałby
+    acute_load w oknie 7d i ACWR ratio); brak daty = odrzuć rekord, tak samo
+    jak hevy_normalize.normalize_workout (if not start.startswith("20") -> None).
+    """
     if not iso:
-        return date.today()
+        return None
     # obetnij offset strefowy / 'Z' i część ułamkową
     s = str(iso)[:10]
-    return datetime.strptime(s, "%Y-%m-%d").date()
+    try:
+        return datetime.strptime(s, "%Y-%m-%d").date()
+    except ValueError:
+        # niezdatny format daty — nie zgaduj, odrzuć
+        return None
 
 
 def _set_load(s: dict) -> float | None:
@@ -73,6 +83,10 @@ def workout_daily_load(workout: dict) -> tuple[date, float] | None:
     jakichkolwiek liczonych serii.
     """
     day = _parse_date(workout.get("startTime"))
+    if day is None:
+        # brak sensownej daty startu — odrzuć trening (nie „dziś", nie zgaduj)
+        logger.debug("workout bez daty startu (startTime=None/niezdatny) -> odrzucony")
+        return None
     total = 0.0
     any_counted = False
     for ex in workout.get("exercises", []):
@@ -124,6 +138,10 @@ def cardio_session_daily_load(cardio_session: dict) -> tuple[date, float] | None
     if duration_f <= 0 or not (1 <= rpe_f <= 10):
         return None
     day = _parse_date(cardio_session.get("startTime"))
+    if day is None:
+        # brak daty -> odrzuć sesję (nie przypisuj do „dziś")
+        logger.debug("cardio bez daty startu -> odrzucone")
+        return None
     return day, compute_cardio_session_load(duration_f, rpe_f)
 
 
@@ -212,7 +230,7 @@ def fetch_workouts_impl(
             break
         for w in batch:
             d = _parse_date(w.get("startTime"))
-            if start <= d <= end:
+            if d is not None and start <= d <= end:
                 out.append(w)
         # koniec jeśli strona była krótsza niż page_size
         if len(batch) < page_size:

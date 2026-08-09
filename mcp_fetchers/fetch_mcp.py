@@ -435,8 +435,13 @@ def _run_analysis(tmp: str, args) -> int:
                        for d in (raw_apple.get("daily") or [])]
         apple_temp = [x for x in (apple_normalize.normalize_temp_point(p)
                                   for p in (raw_apple.get("temp") or [])) if x]
-        apple_workouts = [x for x in (apple_normalize.normalize_workout(w)
-                                      for w in (raw_apple.get("workouts") or [])) if x]
+        # współdzielony set dedupe na czas JEDNEGO przebiegu _run_analysis —
+        # zamiast globalnego _SEEN_IDS (który przeżywał między uruchomieniami
+        # długożyjącego procesu i błędnie odrzucał treningi z tym samym id
+        # ale inną datą). Zob. apple_normalize.normalize_workout(seen_ids=...).
+        _apple_seen: set[str] = set()
+        apple_workouts = [x for x in (apple_normalize.normalize_workout(w, _apple_seen)
+                                     for w in (raw_apple.get("workouts") or [])) if x]
         with open(os.path.join(tmp, "apple_input.json"), "w") as f:
             json.dump({"apple_daily": apple_daily, "apple_temp": apple_temp,
                        "apple_workouts": apple_workouts}, f, ensure_ascii=False)

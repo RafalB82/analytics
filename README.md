@@ -175,11 +175,11 @@ kcal — ryzyko niedoboru), `baseline_trends` (HRV/RHR trend + R²), `inputs`
 
 ## Jakość / CI
 
-- **299 testów** (jednostkowe + integracyjne) — `pytest`
+- **319 testów** (jednostkowe + integracyjne) — `pytest`
 - Coverage `analytics/`: **~90%** (line) — `pytest --cov=analytics`
-- Coverage `mcp_fetchers/`: częściowy — testowane są tylko `mfp_normalize` (63%);
-  `fetch_mcp.py` / `build_input.py` / `apple_normalize` / `hevy_normalize` nie mają
-  jeszcze skryptów testowych w `tests/` (to warstwa pobierania z MCP — offline
-  testowalna, ale wymaga mockowania transportu). Wyraźnie odnotowane, żeby liczba
-  nie wyglądała na niedopilnowaną.
+- Coverage `mcp_fetchers/`: częściowy — testowane są `mfp_normalize` (63%)
+  i `apple_normalize` (53%); `fetch_mcp.py` / `build_input.py` / `hevy_normalize.py`
+  nie mają jeszcze skryptów testowych w `tests/` (to warstwa pobierania z MCP —
+  offline testowalna, ale wymaga mockowania transportu). Wyraźnie odnotowane,
+  żeby liczba nie wyglądała na niedopilnowaną.
 - Ruff + mypy czyste; GitHub Actions: Ruff i mypy na 3.12, pytest+coverage na 3.10/3.12/3.13

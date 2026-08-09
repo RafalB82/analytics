@@ -175,10 +175,10 @@ kcal — ryzyko niedoboru), `baseline_trends` (HRV/RHR trend + R²), `inputs`
 
 ## Jakość / CI
 
-- **319 testów** (jednostkowe + integracyjne) — `pytest`
+- **336 testów** (jednostkowe + integracyjne) — `pytest`
 - Coverage `analytics/`: **~90%** (line) — `pytest --cov=analytics`
-- Coverage `mcp_fetchers/`: częściowy — testowane są `mfp_normalize` (63%)
-  i `apple_normalize` (53%); `fetch_mcp.py` / `build_input.py` / `hevy_normalize.py`
+- Coverage `mcp_fetchers/`: częściowy — testowane są `mfp_normalize` (63%),
+  `apple_normalize` (53%) i `hevy_normalize` (53%); `fetch_mcp.py` i `build_input.py`
   nie mają jeszcze skryptów testowych w `tests/` (to warstwa pobierania z MCP —
   offline testowalna, ale wymaga mockowania transportu). Wyraźnie odnotowane,
   żeby liczba nie wyglądała na niedopilnowaną.

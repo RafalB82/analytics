@@ -385,16 +385,23 @@ def main() -> int:
             if isinstance(h, McpStdioClient):
                 h.close()
 
-    # ---- Apple (HTTP) ----
+    # ---- Apple (HTTP) — odporny na awarię źródła: częściowy błąd jednego
+    # źródła nie może blokować wyniku z pozostałych (Hevy już zapisany wcześniej
+    # w tym samym przebiegu). Symetrycznie do MFP — łagodne pominięcie.
     if not args.skip_apple:
-        print("[fetch_mcp] łączę się z Apple MCP (HTTP)...", file=sys.stderr)
-        a = McpHttpClient(APPLE_MCP_URL)
-        a.initialize()
-        apple_raw = fetch_apple(a, args.target, lookback_days=args.days)
-        print(f"[fetch_mcp] apple: {len(apple_raw['daily'])} dni, "
-              f"{len(apple_raw['workouts'])} workoutów, {len(apple_raw['temp'])} temp",
-              file=sys.stderr)
-        write_stdin_json(apple_raw, os.path.join(tmp, "raw_apple.json"))
+        try:
+            print("[fetch_mcp] łączę się z Apple MCP (HTTP)...", file=sys.stderr)
+            a = McpHttpClient(APPLE_MCP_URL)
+            a.initialize()
+            apple_raw = fetch_apple(a, args.target, lookback_days=args.days)
+            print(f"[fetch_mcp] apple: {len(apple_raw['daily'])} dni, "
+                  f"{len(apple_raw['workouts'])} workoutów, {len(apple_raw['temp'])} temp",
+                  file=sys.stderr)
+            write_stdin_json(apple_raw, os.path.join(tmp, "raw_apple.json"))
+        except Exception as e:
+            # bez tego main() rzuciłby nieobsłużony wyjątek i _run_analysis()
+            # nigdy by się nie wykonał — mimo że Hevy jest już pobrane i zapisane
+            print(f"[fetch_mcp] apple pominięty (awaria źródła): {e}", file=sys.stderr)
 
     # ---- MFP (HTTP) — zjedzone kcal dla bilansu energetycznego ----
     if not args.skip_mfp:

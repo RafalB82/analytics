@@ -46,6 +46,7 @@ from __future__ import annotations
 import json
 import sys
 from contextlib import suppress
+from datetime import datetime, timezone
 
 # Typy serii, które analytics i tak pomija (rozgrzewki) — rzucamy je, żeby nie
 # zaśmiecać wejścia (fetch_hevy sam je odrzuca przez SKIP_SET_TYPES, ale czysto
@@ -54,20 +55,24 @@ DROP_SET_TYPES = {"warmup"}
 
 
 def _normalize_time(iso: str) -> str:
-    """'2026-08-05T17:12:48+00:00' -> '2026-08-05T17:12:48Z'.
-    Analizuje tylko start workoutu; reszta (fractions/offset) obcinana do 'Z'."""
+    """ISO 8601 ze strefą -> 'YYYY-MM-DDTHH:MM:SSZ' w UTC.
+
+    Faktycznie PRZELICZA offset do UTC (np. '2026-08-05T17:12:48-05:00' ->
+    '2026-08-05T22:12:48Z'), zamiast uciąć offset — trening wykonany blisko
+    północy w strefie z dużym przesunięciem od UTC mógłby wylądować pod złym
+    dniem kalendarzowym i przesunąć load w oknie ACWR.
+
+    Zwraca niezmienione wejście, gdy nie da się sparsować."""
     if not iso:
         return iso
-    # zostaw do sekund + Z (obetnij ułamki i offset)
-    body = iso.split(".")[0]
-    # przytnij ewentualny offset +00:00 / Z na końcu
-    if body.endswith("Z"):
-        return body
-    sep = "+" if "+" in body else ("-" if "-" in body[10:] else None)
-    if sep and sep in body:
-        # trzymaj tylko do czasu (pierwsze 19 znaków: YYYY-MM-DDTHH:MM:SS)
-        return body[:19] + "Z"
-    return body + "Z"
+    try:
+        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    except ValueError:
+        # niezdatny format — nie zgaduj, zwróć jak jest (caller i tak sprawdza
+        # startswith("20"))
+        return iso
+    # skróć do sekund (obetnij ułamki/mikrosekundy) + UTC 'Z'
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _normalize_set(s: dict, for_tonnage: bool = False) -> dict | None:
@@ -102,15 +107,26 @@ def _normalize_set(s: dict, for_tonnage: bool = False) -> dict | None:
 
 def _set_tonnage(s: dict) -> float:
     """Tonaż jednej serii = waga × reps (tylko serie z ciężarem i reps).
-    Używane do objętości mechanicznej, NIE do ACWR."""
+    Używane do objętości mechanicznej, NIE do ACWR.
+
+    Te same sanity-checki co _normalize_set (odrzucaj waga/reps <= 0 oraz
+    absurdalne wagi > 1000) — uszkodzony rekord NIE może cicho zaniżyć lub
+    zawyżyć raportowanego użytkownikowi tonnage_total/working (spójnie
+    z analytics/fetch_hevy._set_load)."""
     weight = s.get("weight_kg")
     reps = s.get("reps")
     if weight is None or reps is None:
         return 0.0
     try:
-        return float(weight) * float(reps)
+        weight_f = float(weight)
+        reps_f = float(reps)
     except (TypeError, ValueError):
         return 0.0
+    if weight_f <= 0 or reps_f <= 0:
+        return 0.0
+    if weight_f > 1000 or reps_f > 1000:  # absurdalne — uszkodzone dane
+        return 0.0
+    return weight_f * reps_f
 
 
 def _normalize_exercise(ex: dict) -> dict:

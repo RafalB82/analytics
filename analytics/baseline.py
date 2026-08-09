@@ -70,19 +70,21 @@ def compute_ewma_baseline(
 
     values = np.array([p.value for p in history], dtype=float)
 
-    # COLD-START FIX (spójnie z acwr.compute_chronic_load): EWMA inicjalizowana
-    # samym `values[0]` nadaje pierwszemu dniu okna wagę nieproporcjonalną do
-    # `alpha` — deviation_pct (wejście do scoringu gotowości przez
-    # readiness_integration) potrafi wtedy zależeć od TEGO, który konkretny
+    # COLD-START FIX (w pełni spójnie z acwr.compute_chronic_load): EWMA
+    # inicjalizowana samym `values[0]` nadaje pierwszemu dniu okna wagę
+    # nieproporcjonalną do `alpha` — deviation_pct (wejście do scoringu gotowości
+    # przez readiness_integration) potrafi wtedy zależeć od TEGO, który konkretny
     # dzień (wysokie vs niskie HRV/RHR) wypadł jako pierwszy w oknie, a nie od
     # realnego rozkładu danych. To dokładnie to samo zjawisko, które w acwr.py
     # uznano za błąd i naprawiono (commit 38167ef, 4 testy regresyjne).
     #
-    # Seed = średnia całego okna historii: wynik nie zależy od pozycji pierwszego
-    # dnia; EWMA wciąż "dojeżdża" przez pełne `values`, więc nowsze dni dalej
-    # ważą więcej zgodnie z alpha.
+    # Seed = średnia całego okna historii; pętla przechodzi przez WSZYSTKIE
+    # wartości (for v in values), dokładnie jak w acwr.compute_chronic_load —
+    # seed liczy się jako dodatkowy „dzień zerowy" przed oknem, a pierwszy
+    # element okna konsumuje jedną rekurencją alpha*v + (1-alpha)*ewma.
+    # Dzięki temu baseline.py i acwr.py liczą EWMA JEDNYM wariantem metody.
     ewma = float(np.mean(values))
-    for v in values[1:]:
+    for v in values:
         ewma = alpha * v + (1 - alpha) * ewma
 
     deviation_abs = current - ewma

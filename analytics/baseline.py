@@ -32,6 +32,9 @@ class BaselineResult:
     deviation_pct: float          # (aktualna - baseline) / baseline * 100
     deviation_abs: float
     n_points_used: int
+    current: float                # wartość dnia bieżącego (series[-1].value) — dodane,
+                                   # żeby warstwa serializacji mogła pokazać dzisiejszy
+                                   # realny odczyt, nie tylko odchylenie od baseline
 
 
 @dataclass
@@ -95,6 +98,7 @@ def compute_ewma_baseline(
         deviation_pct=round(deviation_pct, 2),
         deviation_abs=round(deviation_abs, 2),
         n_points_used=len(history),
+        current=round(current, 2),
     )
 
 

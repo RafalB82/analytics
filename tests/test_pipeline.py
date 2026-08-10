@@ -86,6 +86,39 @@ class TestPipeline:
         assert ctx.params == {}
         assert ctx.confidence == {}
 
+    def test_recovery_today_has_current_hrv_rhr_sleep(self):
+        """recovery_today musi nieść REALNY dzisiejszy odczyt (nie licznik
+        punktów jak inputs.apple_points.hrv) — regresja na sekcję dodaną,
+        żeby prompt Telegram mógł pokazać HRV/RHR z nocy zamiast n_points."""
+        result = run(_payload())
+        rt = result.get("recovery_today")
+        assert rt is not None
+        # wartości muszą być realnymi odczytami (ms/bpm), nie licznikiem dni —
+        # sanity check zakresu odróżnia to od np. n_points_used (rzędu 6-28)
+        assert rt["hrv_ms"] is not None
+        assert rt["rhr_bpm"] is not None
+        assert rt["hrv_baseline_ms"] is not None
+        assert rt["rhr_baseline_bpm"] is not None
+        assert "sleep_hours" in rt
+        assert "sleep_missing" in rt
+        # current != n_points_used na poziomie kontraktu: to pole osobne,
+        # inputs.apple_points.hrv (licznik) musi zostać nietknięty
+        assert result["inputs"]["apple_points"]["hrv"] != rt["hrv_ms"]
+
+    def test_recovery_today_sleep_missing_flag(self):
+        """Gdy brak snu na dziś, sleep_missing=True i sleep_hours=None
+        (spójnie z inputs.sleep_data == 'missing')."""
+        payload = _payload()
+        # usuń sen z ostatniego (target) dnia, zostaw resztę historii
+        target = payload["target_date"]
+        for d in payload["apple_daily"]:
+            if d.get("date") == target:
+                d.pop("sleep", None)
+        result = run(payload)
+        rt = result["recovery_today"]
+        assert rt["sleep_missing"] is True
+        assert rt["sleep_hours"] is None
+
 
 class TestConfidenceStageNPointsInWindow:
     """AUDYT: n_points w confidence_stage musi być ograniczone do okna metryki,

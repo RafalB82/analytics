@@ -127,6 +127,8 @@ class PipelineContext:
     activity_stability: Any = None
     weight_trend: dict | None = None
     explanations: dict[str, list[str]] = field(default_factory=dict)
+    hrv_baseline: Any = None
+    rhr_baseline: Any = None
 
     # wyjście
     report: Any = None
@@ -280,6 +282,10 @@ def explain_stage(ctx: PipelineContext) -> PipelineContext:
         hrv_dev = hrv_bl.deviation_pct
     if rhr_bl is not None:
         rhr_dev = rhr_bl.deviation_abs
+    # zachowane w ctx (nie tylko lokalnie) — serialization_stage z nich buduje
+    # sekcję "recovery_today" (dzisiejszy realny odczyt HRV/RHR + trend + jakość snu)
+    ctx.hrv_baseline = hrv_bl
+    ctx.rhr_baseline = rhr_bl
 
     trend_note = getattr(ctx.readiness, "trend_note", None)
     sleep_missing = getattr(ctx.readiness, "sleep_missing", False)
@@ -335,6 +341,16 @@ def serialization_stage(ctx: PipelineContext) -> PipelineContext:
         baseline_trends={
             "hrv": _serialize_trend(ctx.trend_hrv, (ctx.confidence or {}).get("hrv")),
             "rhr": _serialize_trend(ctx.trend_rhr, (ctx.confidence or {}).get("rhr")),
+        },
+        recovery_today={
+            "hrv_ms": ctx.hrv_baseline.current if ctx.hrv_baseline else None,
+            "hrv_baseline_ms": ctx.hrv_baseline.baseline if ctx.hrv_baseline else None,
+            "hrv_deviation_pct": ctx.hrv_baseline.deviation_pct if ctx.hrv_baseline else None,
+            "rhr_bpm": ctx.rhr_baseline.current if ctx.rhr_baseline else None,
+            "rhr_baseline_bpm": ctx.rhr_baseline.baseline if ctx.rhr_baseline else None,
+            "rhr_deviation_bpm": ctx.rhr_baseline.deviation_abs if ctx.rhr_baseline else None,
+            "sleep_hours": m.get("sleep_hours_today"),
+            "sleep_missing": m.get("sleep_hours_today") is None,
         },
         confidence=ctx.confidence or None,
         weight_trend=ctx.weight_trend,

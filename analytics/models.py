@@ -112,6 +112,9 @@ class AnalysisReport(BaseModel):
     nutrition: dict
     baseline_trends: dict
     inputs: dict
+    #: Dzisiejszy realny odczyt HRV/RHR + baseline + odchylenie + sen tej nocy.
+    #: Uzupełnia baseline_trends (kierunek trendu) o wartość punktową "na dziś".
+    recovery_today: dict | None = None
 
     # --- nowe sekcje (fazy 2.0), domyślnie None — wstecznie kompatybilne ---
 

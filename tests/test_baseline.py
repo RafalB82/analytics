@@ -57,6 +57,18 @@ class TestComputeEwmaBaseline:
         res = compute_ewma_baseline(_series([50.0] * 8))
         assert isinstance(res, BaselineResult)
 
+    def test_current_field_holds_last_point_value(self):
+        # current musi być wartością OSTATNIEGO punktu (dzień bieżący),
+        # nie baseline i nie odchyleniem — regresja na pole dodane dla
+        # recovery_today (pipeline.serialization_stage).
+        series = _series([50.0] * 6 + [63.4])
+        res = compute_ewma_baseline(series)
+        assert res is not None
+        assert res.current == 63.4
+        # current nie wchodzi do historii użytej w baseline (patrz
+        # test_baseline_excludes_current_day) — baseline zostaje przy 50.0
+        assert res.baseline == 50.0
+
     def test_flat_series_zero_deviation(self):
         series = _series([55.0] * 8)
         res = compute_ewma_baseline(series)

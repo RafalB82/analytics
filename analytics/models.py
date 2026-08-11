@@ -41,6 +41,11 @@ class DailyMetrics(BaseModel):
     stand_min: float | None = Field(default=None, ge=0)
     physical_effort: float | None = Field(default=None, ge=0)
 
+    # kofeina — ESTYMACJA (patrz analytics.caffeine): liczba kaw z MFP * 70 mg.
+    # Nie jest to pomiar; 1 wpis "caffè" w MFP = 1 kawa (ustalenie z Rafałem).
+    # Surowiec dla docelowej wtórnej analizy (słaby sen -> kofeina poprzedniego dnia).
+    caffeine_mg: float | None = Field(default=None, ge=0)
+
     # skład ciała (punkt kontrolny — tylko w dni ważenia)
     body_fat_pct: float | None = Field(default=None, ge=0, le=100)
     lean_kg: float | None = Field(default=None, ge=0)

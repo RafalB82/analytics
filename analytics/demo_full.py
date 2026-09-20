@@ -138,7 +138,6 @@ def main():
             {"name": "Traditional Strength Training", "start": "2026-08-05T19:12:49",
              "duration_min": 102.9, "avg_heart_rate_bpm": 117.2},  # ignorowana (siła = Hevy)
         ],
-        "mfp_weight": None,   # brak wagi w MFP
         "params": {
             "tdee_current": 2260,
             "phase": "utrzymanie",

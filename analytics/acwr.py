@@ -40,7 +40,7 @@ class ACWRResult:
     acute_load: float          # średnia dzienna z ostatnich 7 dni
     chronic_load: float        # średnia dzienna z ostatnich 28 dni (EWMA)
     ratio: float
-    zone: str                  # below_reference | reference | above_reference | high_ratio
+    zone: str                  # low | reference | elevated | high
 
 
 @dataclass
@@ -185,7 +185,7 @@ def detect_training_gap(
 def build_gap_override_message(gap: GapInfo) -> str | None:
     """
     Komunikat dla warstwy deterministycznej (analogicznie do
-    temperature.build_temp_override_message) — treść i próg decyzji
+    temperature.build_temperature_alert_message) — treść i próg decyzji
     siedzi tutaj, LLM tylko formatuje.
 
     Ostrzega tylko gdy `resuming_today=True` (dziś jest pierwszy powrót
@@ -282,13 +282,13 @@ def acwr_ratio(acute: float, chronic: float) -> ACWRResult:
     ratio = 0.0 if chronic == 0 else round(acute / chronic, 2)
 
     if ratio < settings.ACWR.zone_low:
-        zone = "below_reference"
+        zone = "low"
     elif ratio <= settings.ACWR.zone_optimal_high:
         zone = "reference"
     elif ratio <= settings.ACWR.zone_elevated_high:
-        zone = "above_reference"
+        zone = "elevated"
     else:
-        zone = "high_ratio"
+        zone = "high"
 
     logger.info("ACWR: acute=%.1f chronic=%.1f ratio=%.2f strefa=%s", acute, chronic, ratio, zone)
 
@@ -306,9 +306,9 @@ def acwr_readiness_modifier(acwr: ACWRResult) -> int:
     """
     if acwr.zone == settings.ACWR.zone_insufficient:
         return 0
-    if acwr.zone == "high_ratio":
+    if acwr.zone == "high":
         return 2
-    if acwr.zone == "above_reference":
+    if acwr.zone == "elevated":
         return 1
     return 0
 

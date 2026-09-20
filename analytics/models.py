@@ -70,7 +70,7 @@ class TempAlertStatus(BaseModel):
 
     status: str = "no_data"  # "ok" | "no_data"
     alert: TempAlertPayload | None = None
-    override_message: str | None = None
+    alert_message: str | None = None
     baseline_c: float | None = None
     current_c: float | None = None
     deviation_c: float | None = None
@@ -90,7 +90,7 @@ class ReadinessResult(BaseModel):
     zone: str
     max_rpe: str
     volume_note: str
-    hard_override: str | None = None
+    temperature_alert: str | None = None
     trend_note: str | None = None
     sleep_missing: bool = False
 

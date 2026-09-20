@@ -281,8 +281,8 @@ def compute_weight_trend(
 ) -> WeightTrend | None:
     """Trend liniowy + rolling median wagi (kg) z serii wielopunktowej.
 
-    Używa dowolnej serii z atrybutami .day/.weight_kg (WeightSample / WeightPoint
-    z fetch_mfp / fetch_apple). Zwraca None, gdy za mało punktów (< min_points).
+    Używa serii Apple Health z atrybutami .day/.weight_kg. Zwraca None, gdy za
+    mało punktów (< min_points).
 
     Wynik (WeightTrend):
       - slope_kg_per_day: nachylenie regresji liniowej (kg/dzień)

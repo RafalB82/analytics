@@ -46,8 +46,11 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from contextlib import suppress
 from datetime import datetime, timezone
+
+from analytics.exceptions import InvalidMetricError
+from analytics.validators import parse_valid_rpe
+from analytics.validators import reps as validate_reps
 
 logger = logging.getLogger(__name__)
 
@@ -110,15 +113,19 @@ def _normalize_set(s: dict, for_tonnage: bool = False) -> dict | None:
         return None
     try:
         weight_f = float(weight)
-        reps_i = int(reps)
+        reps_i = validate_reps(reps)
     except (TypeError, ValueError):
         return None
-    if weight_f <= 0 or reps_i <= 0:
+    if reps_i is None or weight_f <= 0 or reps_i <= 0:
         return None
     out: dict = {"type": set_type, "weight": weight_f, "reps": reps_i}
     if s.get("rpe") is not None:
-        with suppress(TypeError, ValueError):
-            out["rpe"] = float(s["rpe"])  # zły RPE dorzucamy jako brak
+        try:
+            parsed_rpe = parse_valid_rpe(s["rpe"])
+        except InvalidMetricError:
+            parsed_rpe = None
+        if parsed_rpe is not None:
+            out["rpe"] = parsed_rpe
     return out
 
 
@@ -136,10 +143,10 @@ def _set_tonnage(s: dict) -> float:
         return 0.0
     try:
         weight_f = float(weight)
-        reps_f = float(reps)
+        reps_f = validate_reps(reps)
     except (TypeError, ValueError):
         return 0.0
-    if weight_f <= 0 or reps_f <= 0:
+    if reps_f is None or weight_f <= 0 or reps_f <= 0:
         return 0.0
     if weight_f > 1000 or reps_f > 1000:  # absurdalne — uszkodzone dane
         return 0.0

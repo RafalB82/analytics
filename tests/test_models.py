@@ -57,7 +57,7 @@ class TestTempAlertStatus:
         t = TempAlertStatus()
         assert t.status == "no_data"
         assert t.alert is None
-        assert t.override_message is None
+        assert t.alert_message is None
 
     def test_temperature_alert_excluded_from_dump(self):
         # temp_alert_obj ma exclude=True → nie wchodzi do model_dump()

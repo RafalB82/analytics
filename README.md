@@ -160,13 +160,14 @@ Hevy jest źródłem danych o treningu siłowym.
 Dla każdej serii obciążenie jest określane jako:
 
 ```text
-load = sets × reps × weight × RPE
+    rpe_weighted_tonnage = sets × reps × weight × RPE
 ```
 
 Jeżeli RPE nie jest dostępne:
 
 ```text
-load = sets × reps × weight
+    rpe_weighted_tonnage is unavailable; unweighted tonnage remains a separate
+    mechanical-volume metric.
 ```
 
 Brak RPE nie powoduje odrzucenia treningu, ale obniża wiarygodność oceny obciążenia.

@@ -21,7 +21,7 @@ from .baseline import MetricPoint, TrendResult, compute_ewma_baseline, compute_t
 from .config import settings
 from .exceptions import MissingBaselineError
 from .logging import get_logger
-from .temperature import TempAlert, build_temp_override_message
+from .temperature import TempAlert, build_temperature_alert_message
 
 logger = get_logger(__name__)
 
@@ -37,7 +37,7 @@ class ReadinessOutput:
     zone: str                    # "zielona" | "żółta" | "czerwona" (legacy)
     max_rpe: str
     volume_note: str
-    hard_override: str | None    # legacy alias; temperatura jest silnym sygnałem recovery
+    temperature_alert: str | None
     trend_note: str | None
     sleep_missing: bool            # True = brak danych o śnie (składnik snu pominięty w score)
     gap_note: str | None            # ostrzeżenie o powrocie po luce treningowej (nie zmienia total_score)
@@ -113,14 +113,14 @@ def _cardio_7d_penalty(sessions_7d: int) -> int:
 
 def classify_recovery(
     base: int,
-    hard_override_significant: bool,
+    temperature_alert: bool,
     rhr_trend: TrendResult | None = None,
 ) -> dict:
     """Oś RECOVERY: czy organizm pokazuje oznaki pogorszenia regeneracji.
 
     Składowe:
       - base (HRV+RHR+sen deviation) — główny sygnał;
-      - hard_override z temperatury (znacząca) -> critical zawsze;
+      - znacząca temperatura wzmacnia recovery, ale nie tworzy samotnie critical;
       - rhr_trend (faza 6.2c): ROSNĄCY, wiarygodny trend RHR to sygnał
         OSTRZEGAWCZY (RHR rośnie od snu/stresu/odwodnienia/infekcji/alkoholu/
         pory pomiaru — nie diagnoza przeciążenia). Podbija recovery o jeden
@@ -136,6 +136,10 @@ def classify_recovery(
     else:                                             # 4+ pkt -> silne oznaki
         status = "critical"
 
+    # Temperatura jest silnym sygnałem recovery, ale sama nie tworzy critical.
+    if temperature_alert and status == "ok":
+        status = "degraded"
+
     # RHR trend jako sygnał ostrzegawczy (faza 6.2c)
     rhr_warning = bool(
         rhr_trend is not None
@@ -150,7 +154,7 @@ def classify_recovery(
     return {
         "status": status,
         "base_score": base,
-        "hard_override_significant": hard_override_significant,
+        "temperature_alert": temperature_alert,
         "rhr_trend_warning": rhr_warning,   # jawny sygnał ostrzegawczy
     }
 
@@ -218,7 +222,7 @@ def classify_data_quality(
     return {"status": status, "notes": notes}
 
 
-def build_verdict(recovery: dict, load: dict, hard_override: str | None) -> dict:
+def build_verdict(recovery: dict, load: dict) -> dict:
     """Werdykt: semantyka stref wg połączenia LOAD i RECOVERY (sedno review).
 
     NADRZĘDNOŚĆ (faza 10.4): to pole jest rekomendowaną interpretacją strefy
@@ -238,7 +242,6 @@ def build_verdict(recovery: dict, load: dict, hard_override: str | None) -> dict
     - LOAD wysoki + RECOVERY degraded -> orange (duże obciążenie + pojedyncze
       oznaki pogorszenia).
     - LOAD wysoki + RECOVERY critical -> red (duże obciążenie + silne oznaki).
-    - hard_override (znacząca temperatura) -> red, niezależnie od osi.
     """
     load_status = load["status"]
     rec_status = recovery["status"]
@@ -307,7 +310,7 @@ def compute_full_readiness(
     acwr_penalty = acwr_readiness_modifier(acwr_result)
 
     # Kara cardio: przy nieregularnym ("szarpanym") cardio ratio jest niewiarygodne
-    # (chronic zaniżone -> fałszywe wysokie ryzyko). Dlatego cardio karzemy na
+    # (chronic zaniżone -> fałszywa strefa high). Dlatego cardio karzemy na
     # podstawie cardio_7d_sessions — ile MOCNYCH sesji wpadło w bieżący tydzień
     # (realny sygnał wpływu na blok). Ratio cardio służy tylko gdy chronic jest
     # wiarygodny (regularne cardio, patrz ACWR.cardio_min_valid_days); wtedy
@@ -331,7 +334,7 @@ def compute_full_readiness(
         trend_note = "HRV w trendzie spadkowym od kilku dni — obserwuj, niezależnie od dzisiejszego wyniku."
 
     # Temperatura pozostaje jawnym sygnałem, ale nie wymusza legacy strefy.
-    hard_override = build_temp_override_message(temp_alert, spo2_confirmed)
+    temperature_message = build_temperature_alert_message(temp_alert, spo2_confirmed)
 
     # luka treningowa — OSTRZEŻENIE, nie modyfikator punktowy ani hard
     # override strefy. ACWR ratio po przerwie zwykle pokazuje "niedociążenie"
@@ -345,9 +348,8 @@ def compute_full_readiness(
     # Rozdzielenie LOAD od RECOVERY + DATA_QUALITY + werdykt semantyczny.
     # Istniejący scoring (base/acwr_penalty/total/zone) zostaje BEZ ZMIAN —
     # osie i verdict to dodatkowa, nadrzędna interpretacja dla warstwy LLM.
-    hard_override_significant = False
-
-    recovery = classify_recovery(base, hard_override_significant, rhr_trend)
+    temperature_signal = temp_alert.severity == "znacząca"
+    recovery = classify_recovery(base, temperature_signal, rhr_trend)
     load = classify_load(
         strength_acute=acwr_result.acute_load,
         strength_chronic=acwr_result.chronic_load,
@@ -368,7 +370,7 @@ def compute_full_readiness(
         rpe_coverage_pct=rpe_coverage_pct,
     )
 
-    verdict = build_verdict(recovery, load, None)
+    verdict = build_verdict(recovery, load)
 
     return ReadinessOutput(
         base_score=base,
@@ -377,7 +379,7 @@ def compute_full_readiness(
         zone=zone,
         max_rpe=max_rpe,
         volume_note=volume_note,
-        hard_override=hard_override,
+        temperature_alert=temperature_message,
         trend_note=trend_note,
         sleep_missing=sleep_hours_today is None,
         gap_note=gap_note,

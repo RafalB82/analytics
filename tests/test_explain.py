@@ -11,7 +11,7 @@ def _full_payload():
         sleep_hours=7.2,
         sleep_missing=False,
         trend_note=None,
-        acwr={"zone": "wysokie ryzyko", "ratio": 2.37},
+        acwr={"zone": "high", "ratio": 2.37},
         rpe_coverage={"coverage_pct": 100.0},
         temperature={"status": "no_data", "alert": None},
         goal={"status": "ok", "tdee_kcal": 4592, "window_days": 7,
@@ -33,7 +33,7 @@ class TestBuildExplanations:
     def test_acwr_reason_has_zone_and_rpe(self):
         ex = build_explanations(**_full_payload())
         joined = " ".join(ex["acwr"])
-        assert "wysokie ryzyko" in joined
+        assert "high" in joined
         assert "100" in joined
 
     def test_sleep_missing_reason(self):
@@ -84,7 +84,7 @@ class TestBuildExplanations:
         # ACWR 0.77 (niedociążenie) => kara 0, ratio NIE karze
         reasons = _acwr_penalty_reasons(
             acwr_penalty=0,
-            acwr={"zone": "below_reference", "ratio": 0.77},
+            acwr={"zone": "low", "ratio": 0.77},
             rpe_coverage={"coverage_pct": 66.9},
             cardio_7d_sessions=0,
         )
@@ -97,7 +97,7 @@ class TestBuildExplanations:
         # kara +2 pochodzi z 3 mocnych sesji cardio w 7d, NIE z ratio
         reasons = _acwr_penalty_reasons(
             acwr_penalty=2,
-            acwr={"zone": "below_reference", "ratio": 0.77},
+            acwr={"zone": "low", "ratio": 0.77},
             rpe_coverage={"coverage_pct": 66.9},
             cardio_7d_sessions=3,
         )
@@ -110,7 +110,7 @@ class TestBuildExplanations:
     def test_no_cardio_no_penalty(self):
         reasons = _acwr_penalty_reasons(
             acwr_penalty=0,
-            acwr={"zone": "optymalna", "ratio": 1.1},
+            acwr={"zone": "reference", "ratio": 1.1},
             rpe_coverage=None,
             cardio_7d_sessions=0,
         )

@@ -247,7 +247,7 @@ class TestBuildCardioAcwr:
         series = build_apple_cardio_series(rides, start, today)
         res = build_cardio_acwr(series)
         # ratio liczony, ale strefa jawnie sygnalizuje niewiarygodność próbki,
-        # a nie fałszywe "wysokie ryzyko" (3.36 z 3 sesji w 28d to artefakt)
+        # a nie fałszywa strefa high (3.36 z 3 sesji w 28d to artefakt)
         assert res.ratio > 0
         assert res.zone == settings.ACWR.zone_insufficient
         assert acwr_readiness_modifier(res) == 0  # brak danych -> 0 punktów karnych
@@ -268,7 +268,7 @@ class TestBuildCardioAcwr:
         res = build_cardio_acwr(series)
         # próbka wystarczająca -> klasyczne strefy ryzyka (nie "niewystarczające dane")
         assert res.zone != settings.ACWR.zone_insufficient
-        assert res.zone in ("below_reference", "reference", "above_reference", "high_ratio")
+        assert res.zone in ("low", "reference", "elevated", "high")
 
     def test_build_series_ignores_strength(self):
         today = date(2026, 8, 7)

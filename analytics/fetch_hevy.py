@@ -20,8 +20,8 @@ from typing import Any
 from .acwr import SessionLoad, compute_session_load
 from .exceptions import InvalidMetricError
 from .logging import get_logger
+from .validators import parse_valid_rpe
 from .validators import reps as validate_reps
-from .validators import rpe as validate_rpe
 
 logger = get_logger(__name__)
 
@@ -38,8 +38,8 @@ def _rpe_status(value: Any) -> tuple[str, float | None]:
     if value is None:
         return "missing", None
     try:
-        return "valid", validate_rpe(value)
-    except Exception:
+        return "valid", parse_valid_rpe(value)
+    except InvalidMetricError:
         return "invalid", None
 
 
@@ -87,8 +87,6 @@ def _set_load(s: dict) -> float | None:
     if weight_f > 1000 or reps_f > 1000:  # absurdalne — uszkodzone dane
         return None
     rpe_status, rpe_f = _rpe_status(s.get("rpe"))
-    if rpe_status == "valid" and rpe_f is None:
-        return None
     # compute_session_load(sets, reps, weight_kg, rpe); sets=1 (per seria)
     return compute_session_load(
         sets=1, reps=reps_f, weight_kg=weight_f,
@@ -247,7 +245,7 @@ def compute_volume_breakdown(workouts: list[dict]) -> dict:
     Liczy, bez zmiany scoringu (scoring nadal używa rpe_weighted_tonnage przez
     `_set_load`/`compute_session_load`):
       - working_tonnage: suma tonażu serii ROBOCZYCH (non-warmup), bez RPE
-      - rpe_weighted_volume: suma tonaż×RPE dla serii z RPE
+       - rpe_weighted_tonnage: suma tonaż×RPE dla serii z RPE
       - rpe_coverage_pct / rpe_weighted_reliable: gdy pokrycie RPE niskie,
         RPE-weighted jest mniej wiarygodny (nie nadinterpretować)
       - warmup_tonnage: dla kontekstu (rozgrzewki nie wchodzą do obciążenia roboczego)
@@ -295,7 +293,7 @@ def compute_volume_breakdown(workouts: list[dict]) -> dict:
     coverage = round(with_rpe / working_sets * 100, 1) if working_sets else 0.0
     return {
         "working_tonnage": round(working_tonnage, 0),
-        "rpe_weighted_volume": round(rpe_weighted, 0),
+        "rpe_weighted_tonnage": round(rpe_weighted, 0),
         "warmup_tonnage": round(warmup_tonnage, 0),
         "working_sets": working_sets,
         "missing_rpe": working_sets - with_rpe - invalid_rpe,

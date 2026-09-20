@@ -256,7 +256,7 @@ def test_pipeline_does_not_import_run_analysis():
 
     # moduły bazowe + pipeline + wszystkie moduły dziedzinowe
     _targets = ["pipeline", "acwr", "baseline", "confidence", "explain",
-                "fetch_apple", "fetch_hevy", "fetch_mfp", "models",
+                 "fetch_apple", "fetch_hevy", "models",
                 "nutrition_adaptive", "readiness_integration", "stability",
                 "temperature", "validators.metrics", "validators.input"]
     for target in _targets:

@@ -7,7 +7,7 @@ from analytics.baseline import MetricPoint
 from analytics.temperature import (
     TempPoint,
     build_temp_alert,
-    build_temp_override_message,
+    build_temperature_alert_message,
     compute_temp_baseline,
     serialize_temp_output,
     spo2_confirmation,
@@ -85,20 +85,20 @@ class TestSpo2Confirmation:
         assert spo2_confirmation(spo2_pct=95.0, baseline_spo2=96.0, threshold=2.0) is False
 
 
-class TestBuildTempOverrideMessage:
+class TestBuildTemperatureAlertMessage:
     def test_none_when_not_triggered(self):
         alert = temp_deviation_alert(current=36.0, baseline=35.9)
-        assert build_temp_override_message(alert, spo2_confirmed=False) is None
+        assert build_temperature_alert_message(alert, spo2_confirmed=False) is None
 
     def test_message_when_significant_with_hrv(self):
         alert = temp_deviation_alert(current=36.5, baseline=36.0, threshold_c=0.3, hrv_dropped=True)
-        msg = build_temp_override_message(alert, spo2_confirmed=False)
+        msg = build_temperature_alert_message(alert, spo2_confirmed=False)
         assert msg is not None
         assert "silny sygnał" in msg
 
     def test_message_when_elevated_observational(self):
         alert = temp_deviation_alert(current=36.35, baseline=36.0, threshold_c=0.3)
-        msg = build_temp_override_message(alert, spo2_confirmed=False)
+        msg = build_temperature_alert_message(alert, spo2_confirmed=False)
         assert msg is not None
         assert "Obserwuj" in msg
 
@@ -143,7 +143,7 @@ class TestSerializeTempOutput:
 
     def test_no_data_when_empty_series(self):
         out = serialize_temp_output(None, [], date(2026, 7, 28))
-        assert out == {"status": "no_data", "alert": None, "override_message": None}
+        assert out == {"status": "no_data", "alert": None, "alert_message": None}
 
     def test_full_serialization(self):
         temp_series = _temps([36.0, 36.0, 36.0, 36.5], start=date(2026, 7, 25))

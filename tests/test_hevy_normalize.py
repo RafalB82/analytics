@@ -10,6 +10,9 @@ Audyt Rafała (2026-08-09) — plik nie miał testów; pokrywa oba fixy:
 """
 from __future__ import annotations
 
+import pytest
+
+from analytics.exceptions import InvalidMetricError
 from mcp_fetchers.hevy_normalize import (
     _normalize_time,
     _set_tonnage,
@@ -74,8 +77,10 @@ class TestSetTonnage:
         assert _set_tonnage({"weight_kg": -50, "reps": 3}) == 0.0
 
     def test_zero_and_negative_reps_rejected(self):
-        assert _set_tonnage({"weight_kg": 100, "reps": 0}) == 0.0
-        assert _set_tonnage({"weight_kg": 100, "reps": -3}) == 0.0
+        with pytest.raises(InvalidMetricError):
+            _set_tonnage({"weight_kg": 100, "reps": 0})
+        with pytest.raises(InvalidMetricError):
+            _set_tonnage({"weight_kg": 100, "reps": -3})
 
     def test_absurd_weight_rejected(self):
         # AUDYT fix: waga > 1000 -> 0 (sanity-check jak w fetch_hevy._set_load)

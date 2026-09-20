@@ -86,7 +86,6 @@ def build_payload(target: str, phase: str, weight: float | None,
         "apple_workouts": apple_workouts,
         "hevy_workouts": hevy,
         "cardio_sessions": [],
-        "mfp_weight": None,
         "mfp_daily_kcal": mfp_daily_kcal or [],  # zjedzone kcal/dzień z MFP diary
         "params": {
             "phase": phase,

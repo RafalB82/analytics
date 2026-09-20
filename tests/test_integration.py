@@ -85,7 +85,6 @@ def _payload(**overrides) -> dict:
         "target_date": "2026-08-07",
         "apple_daily": _mk_apple(),
         "hevy_workouts": _mk_hevy(),
-        "mfp_weight": None,
         "params": {"tdee_current": 2260, "phase": "utrzymanie",
                    "bodyweight_kg": 69.9, "target_trend_kg_per_week": 0.0},
     }
@@ -184,6 +183,15 @@ class TestRunEndToEnd:
         # białko z wagi
         assert n["protein_g"] is not None
 
+    def test_weight_trend_uses_apple_health_series(self):
+        apple = _mk_apple()
+        for i, value in enumerate((80.0, 80.1, 80.2, 80.3, 80.4, 80.5, 80.6, 80.7)):
+            apple[-8 + i]["weight_body_mass"] = value
+        result = run(_payload(apple_daily=apple))
+        trend = result["weight_trend"]
+        assert trend is not None
+        assert trend["rolling_median_kg"] == 80.35
+
     def test_nutrition_redukcja_negative_margin(self):
         result = run(_payload(params={"phase": "redukcja", "bodyweight_kg": 69.9}))
         n = result["nutrition"]
@@ -249,7 +257,7 @@ class TestParseInput:
 
 class TestValidateInput:
     def test_valid_payload(self):
-        source, target, params, apple_daily, hevy, apple_w, cardio, mfp, temp = validate_input(_payload())
+        source, target, params, apple_daily, hevy, apple_w, cardio, temp = validate_input(_payload())
         assert source == "apple+hevy+mfp"
         assert target == date(2026, 8, 7)
         assert cardio == []  # domyślnie brak sesji cardio
@@ -262,7 +270,7 @@ class TestValidateInput:
         ]
         p["apple_workouts"] = [{"name": "Outdoor Cycling", "start": "2026-08-06T08:00:00",
                                  "duration_min": 90, "avg_heart_rate_bpm": 140}]
-        source, target, params, apple_daily, hevy, apple_w, cardio, mfp, temp = validate_input(p)
+        source, target, params, apple_daily, hevy, apple_w, cardio, temp = validate_input(p)
         assert len(cardio) == 1
         assert cardio[0]["rpe"] == 6
         assert len(apple_w) == 1

@@ -10,6 +10,7 @@ from analytics.validators import (
     coerce_float,
     ensure_sorted_ascending,
     hrv,
+    parse_valid_rpe,
     reps,
     rhr,
     rpe,
@@ -123,6 +124,19 @@ class TestSetWeightAndReps:
         with pytest.raises(InvalidMetricError):
             rpe(11)
 
+    def test_zero_reps_rejected(self):
+        with pytest.raises(InvalidMetricError):
+            reps(0)
+
+    @pytest.mark.parametrize("value, expected", [(None, None), (7, 7.0), ("7", 7.0), (7.0, 7.0)])
+    def test_parse_valid_rpe(self, value, expected):
+        assert parse_valid_rpe(value) == expected
+
+    @pytest.mark.parametrize("value", [0, 11, "abc", float("nan"), float("inf")])
+    def test_parse_invalid_rpe(self, value):
+        with pytest.raises(InvalidMetricError):
+            parse_valid_rpe(value)
+
 
 class TestEnsureSortedAscending:
     def test_sorted_passes(self):
@@ -151,7 +165,7 @@ class TestValidateInput:
     """Testy validate_input (przeniesiony do validators/input.py, krok 2/9)."""
 
     def test_valid_returns_components(self):
-        source, target, params, apple_daily, hevy, app_wk, cardio, mfp, temp = validate_input(_input_payload())
+        source, target, params, apple_daily, hevy, app_wk, cardio, temp = validate_input(_input_payload())
         assert source == "apple+hevy+mfp"
         assert target == date(2026, 8, 7)
         assert apple_daily
@@ -159,7 +173,6 @@ class TestValidateInput:
         assert hevy == []
         assert app_wk == []
         assert cardio == []
-        assert mfp == []
         assert temp == []
 
     def test_bad_source_rejected(self):
@@ -183,5 +196,5 @@ class TestValidateInput:
         assert target == date.today()
 
     def test_optional_fields_default_empty(self):
-        _, _, _, _, hevy, app_wk, cardio, mfp, temp = validate_input(_input_payload(target_date="2026-08-07"))
-        assert hevy == [] and app_wk == [] and cardio == [] and mfp == [] and temp == []
+        _, _, _, _, hevy, app_wk, cardio, temp = validate_input(_input_payload(target_date="2026-08-07"))
+        assert hevy == [] and app_wk == [] and cardio == [] and temp == []

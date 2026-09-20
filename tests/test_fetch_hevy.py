@@ -120,7 +120,7 @@ class TestComputeVolumeBreakdown:
         w = _workout("2026-08-09T10:00:00Z", [_set(100, 5, rpe=8)])
         b = compute_volume_breakdown([w])
         assert b["working_tonnage"] == 500
-        assert b["rpe_weighted_volume"] == 4000
+        assert b["rpe_weighted_tonnage"] == 4000
         assert b["working_sets"] == 1
         assert b["rpe_coverage_pct"] == 100.0
         assert b["rpe_weighted_reliable"] is True
@@ -162,7 +162,7 @@ class TestComputeVolumeBreakdown:
         ])
         b = compute_volume_breakdown([w])
         assert b["working_tonnage"] == 900
-        assert b["rpe_weighted_volume"] == 3200  # tylko seria z poprawnym RPE
+        assert b["rpe_weighted_tonnage"] == 3200  # tylko seria z poprawnym RPE
         assert b["working_sets"] == 2
         assert b["rpe_coverage_pct"] == 50.0
 

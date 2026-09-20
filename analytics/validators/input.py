@@ -16,11 +16,11 @@ from ..exceptions import InsufficientDataError, InvalidMetricError
 ALLOWED_SOURCES = {"apple+hevy+mfp"}
 
 
-def validate_input(payload: dict) -> tuple[str, date, dict, list, list, list, list, list, list]:
+def validate_input(payload: dict) -> tuple[str, date, dict, list, list, list, list, list]:
     """Weryfikuje źródło i obecność danych. Zwraca uporządkowane składowe.
 
     Zwraca: (source, target, params, apple_daily, hevy_workouts, apple_workouts,
-    cardio_sessions, mfp_weight, apple_temp).
+     cardio_sessions, apple_temp).
     """
     source = payload.get("source")
     if source not in ALLOWED_SOURCES:
@@ -43,11 +43,10 @@ def validate_input(payload: dict) -> tuple[str, date, dict, list, list, list, li
     hevy_workouts = payload.get("hevy_workouts", [])
     apple_workouts = payload.get("apple_workouts", [])
     cardio_sessions = payload.get("cardio_sessions", [])
-    mfp_weight = payload.get("mfp_weight") or []
     apple_temp = payload.get("apple_temp") or []
 
     return (source, target, params, apple_daily, hevy_workouts, apple_workouts,
-            cardio_sessions, mfp_weight, apple_temp)
+            cardio_sessions, apple_temp)
 
 
 def _parse_target(s: str | None) -> date:

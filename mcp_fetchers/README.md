@@ -137,7 +137,7 @@ ale to temat na osobną decyzję — obecne podejście adapterowe jest bezpieczn
 - `apple__list_recent_workouts(limit=20)` zwróciło w tej sesji treningi
   **tylko z ostatnich ~7 dni** (4.08–8.08), mimo że w bazie są starsze.
 - Silnik liczy cardio ACWR w oknie 28d (chronic). Przy chronic opartym na
-  4–5 sesjach z 7 dni ratio wyszło **3.32 (wysokie ryzyko)**, ale to
+   4–5 sesjach z 7 dni ratio wyszło **3.32 (high)**, ale to
   **artefakt zaniżonego chronic**, nie realne przeciążenie.
 - Confidence ACWR = 69 (Medium), completeness 0.43 — układ sam to sygnalizuje.
 - **Skutek:** cardio ACWR obecnie NIE jest godne zaufania. Siłowe OK.
@@ -170,10 +170,9 @@ ale to temat na osobną decyzję — obecne podejście adapterowe jest bezpieczn
   (dzień trwa), więc TDEE 7d uwzględnia pełny dzień 9.08 jako mały — to
   lekko zaniża średnią aktywności.
 
-### 3.6 Waga w MFP pusta → TDEE nie korzysta z punktów kontrolnych
-- `mfp_weight` = None (brak danych) — TDEE liczony tylko z aktywności Apple.
-- Waga 71.05 / BF 15.1% z 7.08 dostępna jest w `apple_daily`, ale moduł
-  MDEE jej nie używa do korekty — tylko jako kontekst (białko).
+### 3.6 Waga z Apple Health
+- Masa ciała i `weight_trend` pochodzą wyłącznie z Apple Health.
+- MFP dostarcza wyłącznie intake/calories/meals.
 
 ### 3.7 Limit ćwiczeń bez mapowania NAZWA → nic, ale...
 - Hevy zwraca `exercise_template_id`; my używamy tylko `title` (do niczego
@@ -376,8 +375,8 @@ nieregularne, ale mocne/submaksymalne, celowo wpływające na tygodniowy blok):
 **a) `analytics/acwr.py::build_cardio_acwr` + `ACWRSettings.cardio_min_valid_days=12`:**
 ratio cardio jest wiarygodne do strefy ryzyka TYLKO przy regularnym cardio
 (>= 12 dni z obciążeniem w 28d). Przy nieregularnym — zawsze zaniżone chronic
-fałszuje w górę (np. 3.32 z 4 sesji) → strefa "niewystarczające dane" zamiast
-fałszywego "wysokie ryzyko". `acwr_readiness_modifier` daje tej strefie 0.
+   fałszuje w górę (np. 3.32 z 4 sesji) → strefa "insufficient data" zamiast
+   fałszywej strefy `high`. `acwr_readiness_modifier` daje tej strefie 0.
 
 **b) `analytics/readiness_integration.py` — kara cardio z `cardio_7d_sessions`:**
 skoro ratio cardio jest niewiarygodne, realny sygnał obciążenia tygodnia to
@@ -418,7 +417,7 @@ window w `build_daily_load_series` zakłada porządek chronologiczny.
 ### 7.7 Dodatkowe testy
 
 `test_apple_cardio.py`: `test_build_cardio_acwr_on_cycling` zaktualizowany
-(2 sesje -> "niewystarczające dane", nie "wysokie ryzyko"),
+ (2 sesje -> "niewystarczające dane", nie `high`),
 `test_build_cardio_acwr_trustworthy_sample` (>= progu regularności -> normalne
 strefy) + nowy `TestCardio7dPenalty` (progi karencji 7d: 0/1/2).
 Wszystkie 236 testów rdzenia przechodzi (245 z energy_balance — patrz 7.8).
@@ -426,7 +425,7 @@ Wszystkie 236 testów rdzenia przechodzi (245 z energy_balance — patrz 7.8).
 ### Nadal otwarte (z §4, niezmienione)
 
 - RPE coverage < 70% dla siły (starsze treningi bez RPE) — sceptycyzm, nie fix.
-- `mfp_weight` puste → TDEE bez punktów kontrolnych wagi.
+- Trend masy jest liczony z Apple Health; MFP nie jest źródłem masy ciała.
 - Dubl Apple↔Hevy na poziomie (data, nazwa) — teoretycznie nie powstaje
   (rozłączne kategorie: cardio vs siła), dedupe na `id` w Apple to jedyne
   realne zabezpieczenie.
@@ -511,4 +510,3 @@ Wzorzec jest teraz spójny: **żaden krok nie wymaga agenta w pętli** —
 `fetch_mcp` łączy się z Hevy + Apple + MFP, normalizuje i odpala analizę.
 Agent/cron tylko interpretuje wynik. (MFP przez HTTP nadal dostępna ręcznie
 przez narzędzia `mfp_*` — np. do selektywnego dozbierania dni.)
-

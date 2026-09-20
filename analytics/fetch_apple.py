@@ -169,7 +169,7 @@ def latest_weight(daily: list[dict]) -> dict:
 
     Waliduje zakres (RANGES.weight, 40-200 kg) przez `_val_weight` — spójnie
     z to_hrv_series/to_rhr_series (patrz test_hrv_invalid_raises) i z
-    fetch_mfp.to_weight_series (test_invalid_weight_raises): wartość poza
+    Apple Health weight series: wartość poza
     zakresem to nie "brak danych", tylko uszkodzenie (np. literówka
     710 zamiast 71.0, błąd sensora) — rzuca InvalidMetricError zamiast
     cicho przepuszczać absurdalną wagę do compute_protein_target/TDEE.

@@ -11,7 +11,7 @@ logowanie i obsługę błędów.
 ŹRÓDŁA DANYCH (TYLKO Apple + Hevy + MFP):
     - Apple MCP  -> HRV, RHR, sen          (apple__get_daily_activity_range)
     - Hevy  MCP  -> tonaż + RPE (rpe_weighted_tonnage) -> ACWR
-    - MFP        -> waga (OPCJONALNA, obecnie brak danych u Rafała)
+    - MFP        -> intake/calories/meals (bez masy ciała)
 
 SKRYPT NIE WOŁA MCP — agent wstrzykuje dane jako JSON. Dzięki temu jest
 deterministyczny, testowalny offline i NIE ZASTĘPUJE istniejącego
@@ -27,7 +27,6 @@ INPUT JSON:
                      sleep:{total_hours}} ],
   "apple_temp":  [ {date, value} ],   // z apple__get_data(name='apple_sleeping_wrist_temperature')
   "hevy_workouts": [ {...} ],            // z hevy__get-workouts (strony sklejone)
-  "mfp_weight":    [ {date, value} ] | null,   // opcjonalne
   "params": { "tdee_current": 2260, "phase": "utrzymanie", "bodyweight_kg": 69.9,
               "target_trend_kg_per_week": 0.0 }
 }
@@ -137,7 +136,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({
             "status": "error",
             "error": "usage: python3 -m analytics.run_analysis '<input_json>'",
-            "schema": "apple_daily + hevy_workouts + mfp_weight(opt) + params",
+            "schema": "apple_daily + hevy_workouts + mfp_daily_kcal + params",
         }, ensure_ascii=False))
         return 0
     try:

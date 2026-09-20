@@ -115,7 +115,7 @@ def spo2_confirmation(spo2_pct: float | None, baseline_spo2: float = 96.0, thres
     return (baseline_spo2 - spo2_pct) >= threshold
 
 
-def build_temp_override_message(alert: TempAlert, spo2_confirmed: bool) -> str | None:
+def build_temperature_alert_message(alert: TempAlert, spo2_confirmed: bool) -> str | None:
     """
     Generuje treść dla warstwy deterministycznej (nie LLM) — LLM tylko
     sformatuje to ładniej, ale sama treść i próg decyzji siedzi tutaj.
@@ -144,7 +144,7 @@ def build_temp_override_message(alert: TempAlert, spo2_confirmed: bool) -> str |
 def serialize_temp_output(alert, temp_series, target: date) -> dict:
     """Serializuje alert temperatury do dictu outputu (bez obiektu wewnątrz)."""
     if not temp_series:
-        return {"status": "no_data", "alert": None, "override_message": None}
+        return {"status": "no_data", "alert": None, "alert_message": None}
 
     bl = compute_temp_baseline(temp_series)
     current_points = [p for p in temp_series if p.day == target]
@@ -155,7 +155,7 @@ def serialize_temp_output(alert, temp_series, target: date) -> dict:
         "current_c": current,
         "deviation_c": round(current - bl, 3),
         "alert": asdict(alert),
-        "override_message": build_temp_override_message(alert, spo2_confirmed=False),
+        "alert_message": build_temperature_alert_message(alert, spo2_confirmed=False),
     }
 
 
@@ -178,6 +178,6 @@ def build_temp_alert(temp_series, hrv_series, target: date) -> TempAlert:
             hrv_dropped = True
 
     alert = temp_deviation_alert(current=current, baseline=bl, hrv_dropped=hrv_dropped)
-    msg = build_temp_override_message(alert, spo2_confirmed=False)
+    msg = build_temperature_alert_message(alert, spo2_confirmed=False)
     logger.debug("temp override: %s", msg if msg else "brak")
     return alert

@@ -139,12 +139,12 @@ def input_validation_stage(ctx: PipelineContext) -> PipelineContext:
     """Stage 1: walidacja wejścia + rozbicie payloadu."""
     (ctx.source, ctx.target, ctx.params, ctx.apple_daily,
      ctx.hevy_workouts, ctx.apple_workouts, ctx.cardio_sessions,
-     _, ctx.apple_temp) = validate_input(
+      ctx.apple_temp) = validate_input(
         {"source": ctx.source, "target_date": ctx.target,
          "apple_daily": ctx.apple_daily, "hevy_workouts": ctx.hevy_workouts,
          "apple_workouts": ctx.apple_workouts,
          "cardio_sessions": ctx.cardio_sessions,
-          "mfp_weight": [], "apple_temp": ctx.apple_temp,
+           "apple_temp": ctx.apple_temp,
          "params": ctx.params})
     return ctx
 

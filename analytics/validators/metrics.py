@@ -94,26 +94,31 @@ def set_weight(value: object) -> float | None:
 
 
 def reps(value: object) -> int | None:
-    """Liczba powtórzeń — nieujemna liczba całkowita. None = brak danych."""
+    """Liczba powtórzeń — dodatnia liczba całkowita. None = brak danych."""
     if isinstance(value, bool):
         raise InvalidMetricError("reps", value, "wartość bool nie jest liczbą powtórzeń")
     f = coerce_float(value, "reps")
     if f is None:
         return None
-    if f < 0 or not f.is_integer():
+    if f <= 0 or not f.is_integer():
         raise InvalidMetricError(
-            "reps", value, "liczba powtórzeń musi być nieujemną liczbą całkowitą"
+            "reps", value, "liczba powtórzeń musi być dodatnią liczbą całkowitą"
         )
     return int(f)
 
 
-def rpe(value: object) -> float | None:
+def parse_valid_rpe(value: object) -> float | None:
     """RPE w skali 1..10; None oznacza brak wpisu."""
     if value is None:
         return None
     if isinstance(value, bool):
         raise InvalidMetricError("rpe", value, "wartość bool nie jest RPE")
     return validate_float(value, "rpe", 1.0, 10.0)
+
+
+def rpe(value: object) -> float | None:
+    """Alias domenowy dla parsera RPE używanego przez istniejące wywołania."""
+    return parse_valid_rpe(value)
 
 
 def ensure_sorted_ascending(days: list[date], metric: str) -> None:
@@ -142,6 +147,7 @@ __all__ = [
     "weight",
     "set_weight",
     "reps",
+    "parse_valid_rpe",
     "rpe",
     "ensure_sorted_ascending",
 ]

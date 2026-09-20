@@ -151,6 +151,13 @@ Renpho będzie źródłem automatycznych pomiarów masy ciała, które po synchr
 
 Dzięki temu projekt nie wymaga ręcznego przepisywania aktualnej masy ciała do systemu analitycznego.
 
+### Weight source
+
+Apple Health is the canonical source for body-weight trend analysis.
+MyFitnessPal weight data is not used as the canonical weight series. MFP
+provides nutrition intake data; it is not an equivalent replacement for the
+Apple Health weight history.
+
 ---
 
 # Hevy
@@ -216,6 +223,23 @@ Dane nie są wzajemnie zastępowane ani mieszane.
 
 ---
 
+## RPE validation
+
+RPE is accepted only when it is a valid numeric value within the configured
+range (1-10). Missing RPE and invalid RPE are treated differently:
+
+* missing RPE -> valid workout data, but no RPE contribution;
+* invalid RPE -> invalid RPE record;
+* invalid RPE does not count toward RPE coverage.
+
+## Reps validation
+
+Repetitions must be valid integer-valued data. Fractional or otherwise invalid
+repetition values are rejected. They are not silently converted using integer
+truncation.
+
+---
+
 # Bilans energetyczny
 
 Rozdzielenie źródeł pozwala analizować zarówno **wydatek energetyczny**, jak i **spożycie energii**.
@@ -273,6 +297,24 @@ Daje to możliwość późniejszej kalibracji estymacji TDEE na podstawie rzeczy
 
 # Model obciążenia treningowego
 
+## Workload sources
+
+Strength workload:
+
+* source: Hevy;
+* metric: `rpe_weighted_tonnage`;
+* used by: strength ACWR.
+
+Cardio workload:
+
+* source: Apple Health;
+* metric: TRIMP;
+* used by: cardio ACWR.
+
+Cardio sessions are not added to the strength workload series. The legacy
+cardio metric (`duration_minutes × RPE`) is kept only as a fallback and remains
+separate from the strength workload series.
+
 ## Trening siłowy
 
 Trening siłowy jest analizowany niezależnie od cardio.
@@ -291,6 +333,21 @@ Dni bez treningu są reprezentowane jako `0`.
 
 Dzięki temu system analizuje nie tylko liczbę treningów, ale również ich rozmieszczenie w czasie.
 
+### ACWR zones
+
+ACWR zones describe workload state relative to the model reference:
+
+```text
+low       < 0.8
+reference 0.8-1.3
+elevated  > 1.3-1.5
+high      > 1.5
+```
+
+They are not direct estimates of injury risk, fatigue, recovery, or injury
+probability. In particular, `high ACWR` means `high relative workload state`,
+not `high injury risk`.
+
 ---
 
 # Cardio
@@ -302,11 +359,17 @@ Powodem jest różnica jednostek:
 ```text
  siła   → rpe_weighted_tonnage (tonaż × RPE)
  cardio → TRIMP
-
-`rpe_weighted_tonnage` jest wskaźnikiem obciążenia siłowego: tonażem ważonym
-RPE (`tonnage × RPE`). Nie jest klasycznym session-RPE load. Cardio używa osobnej
-jednostki TRIMP i osobnego ACWR.
 ```
+
+`rpe_weighted_tonnage` jest wewnętrzną metryką obciążenia siłowego:
+
+```text
+rpe_weighted_tonnage = sets × reps × weight × RPE
+```
+
+This is an internal strength-workload metric, not classical session-RPE load.
+Cardio używa osobnej
+jednostki TRIMP i osobnego ACWR.
 
 Nie są one sumowane w jeden fizyczny wskaźnik obciążenia.
 
@@ -483,9 +546,9 @@ deviation >= 0.3°C
 
 Przy większym odchyleniu lub jednoczesnym spadku HRV alert może zostać sklasyfikowany jako `significant`.
 
-Temperatura jest sygnałem osi `RECOVERY`. Może podnieść status regeneracji
-z `ok` do `degraded`, ale sama nie wymusza `verdict = red`. Czerwony werdykt
-wymaga odpowiedniej kombinacji obciążenia i pozostałych sygnałów regeneracji.
+Temperatura jest sygnałem osi `RECOVERY`. Podwyższona temperatura może
+pogorszyć ocenę recovery, ale nie wymusza bezpośrednio końcowego verdictu.
+Końcowy readiness verdict wynika z agregacji sygnałów obciążenia i recovery.
 
 Temperatura nie jest jednak diagnozą medyczną.
 
@@ -508,6 +571,18 @@ ok
 degraded
 critical
 ```
+
+Readiness combines multiple signals, including:
+
+* workload / ACWR;
+* recovery indicators;
+* sleep;
+* HRV and resting metrics;
+* temperature;
+* other configured signals.
+
+Temperature is one recovery signal and does not independently determine the
+final readiness verdict.
 
 ## LOAD
 
@@ -575,8 +650,8 @@ Zalecane jest ograniczenie objętości i kontrola intensywności.
 
 Wysoki load występuje razem z silnymi oznakami pogorszonej regeneracji.
 
-Znaczący sygnał temperatury jest dodatkowym kontekstem recovery, a nie
-bezpośrednim override werdyktu.
+Znaczący sygnał temperatury jest dodatkowym kontekstem recovery i jest
+interpretowany razem z pozostałymi sygnałami.
 
 ### Inconclusive
 

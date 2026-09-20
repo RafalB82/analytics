@@ -82,10 +82,10 @@ między tym, co zwracają MCP, a tym, co czyta rdzeń analityczny.
 ### 2.1 Hevy: `weight_kg` / `start_time` vs `weight` / `startTime`
 
 **DECYZJA (2026-08-09, „Czy warmupy mają znaczenie?”):** warmupy są
-celowo WYŁĄCZONE z loadu ACWR (regeneracja), ale ich objętość mechaniczna
-NIE ginie — jest raportowana osobno jako `_volume.tonnage_total`
-(z warmupami) vs `tonnage_working` (bez). To metryka obciążenia tkanek
-obok ACWR, nie mieszana w load gotowości. Szczegóły rozumowania w §3.
+celowo WYŁĄCZONE z loadu ACWR, ale ich objętość mechaniczna NIE ginie — jest
+raportowana osobno jako `_volume.tonnage_total` (z warmupami) vs
+`tonnage_working` (bez). To osobna metryka mechanicznej objętości, nie mieszana
+w load gotowości. Szczegóły rozumowania w §3.
 
 | Pole | Surowy Hevy MCP (`hevy__get-workout`) | Oczekuje `fetch_hevy.py` |
 |------|---------------------------------------|--------------------------|
@@ -145,7 +145,7 @@ ale to temat na osobną decyzję — obecne podejście adapterowe jest bezpieczn
 ### 3.2 Zmienne pokrycie RPE w Hevy → ACWR siłowy liczony częściowo na tonażu
 - Starsze treningi (przed ~06.07) nie mają `rpe` w seriach — tylko tonaż.
 - `compute_session_load(set,reps,kg,rpe=None)` wtedy zwraca sam tonaż
-  (bez mnożenia przez RPE), więc starsze treningi mają **zaniżony load**
+  (bez mnożenia przez RPE), więc starsze treningi mają **niższy load**
   względem nowszych (z RPE).
 - `rpe_coverage = 66.9%` — zgodnie z notatką w MEMORY, przy <70% ACWR
   siłowy traktuj ze sceptycyzmem. Ratio 0.91 i tak w strefie reference,
@@ -187,16 +187,16 @@ objętości treningu?
 
 | Metryka | Liczy | Warmupy wchodzą? | Cel |
 |---------|-------|------------------|-----|
-| ACWR load (`fetch_hevy._set_load`) | tonaż × RPE | **Nie** | kumulacja zmęczenia → decyzja o treningu |
-| `_volume.tonnage_total` (nowe) | kg × reps | **Tak** | obciążenie mechaniczne tkanek / ryzyko |
+| Strength ACWR load (`fetch_hevy._set_load`) | `rpe_weighted_tonnage` = tonaż × RPE | **Nie** | workload state → decyzja o treningu |
+| `_volume.tonnage_total` (nowe) | kg × reps | **Tak** | osobna metryka mechanicznej objętości |
 
 - **W warmupach (bez RPE) pominięcie w ACWR JEST poprawne:** rozgrzewka nie
 tworzy istotnego zmęczenia mięśniowego/anautonomicznego (wysokie RIR, niskie
 %1RM), a ich doliczenie do loadu bez RPE zepsułoby spójność skali
 (mieszanka „sam tonaż” i „tonaż × RPE”)
-- **Ale objętość mechaniczna nie jest bez znaczenia:** w przysiadzie warmupy
-potrafią dawać >50% dziennego tonażu (np. 20×10+40×10+60×5+75×3 vs serie
-robocze). Dla ryzyka kontuzji / faktycznego obciążenia stawów te kg są realne.
+- **Ale objętość mechaniczna pozostaje osobnym sygnałem:** w przysiadzie warmupy
+  potrafią dawać >50% dziennego tonażu (np. 20×10+40×10+60×5+75×3 vs serie
+  robocze). Te kg opisują mechaniczny wolumen i pozostają poza ACWR.
 - **Rozwiązanie wdrożone (opcja 2):** `hevy_normalize` raportuje `_volume`
 = {tonnage_total (z warmupami), tonnage_working (bez)} per workout;
 `build_input` agreguje do sekcji `hevy_volume` w wyniku. ACWR zostaje czysty,
@@ -373,7 +373,7 @@ Dwie powiązane zmiany, dopasowane do modelu użytkownika (cardio "szarpane":
 nieregularne, ale mocne/submaksymalne, celowo wpływające na tygodniowy blok):
 
 **a) `analytics/acwr.py::build_cardio_acwr` + `ACWRSettings.cardio_min_valid_days=12`:**
-ratio cardio jest wiarygodne do strefy ryzyka TYLKO przy regularnym cardio
+ratio cardio jest wiarygodne do klasyfikacji workload state TYLKO przy regularnym cardio
 (>= 12 dni z obciążeniem w 28d). Przy nieregularnym — zawsze zaniżone chronic
    fałszuje w górę (np. 3.32 z 4 sesji) → strefa "insufficient data" zamiast
    fałszywej strefy `high`. `acwr_readiness_modifier` daje tej strefie 0.

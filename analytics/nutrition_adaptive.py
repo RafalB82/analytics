@@ -115,10 +115,11 @@ def compute_tdee(
     # sygnalizuje, że średnia NIE pokrywa window_days kalendarzowych dni.
     span = ((recent[-1].day - recent[0].day).days + 1) if recent else 0
 
-    basal = [d.basal_kj for d in recent if d.basal_kj is not None]
-    active = [d.active_kj for d in recent if d.active_kj is not None]
-    if not basal or not active:
+    complete = [d for d in recent if d.basal_kj is not None and d.active_kj is not None]
+    if not complete:
         raise ValueError("brak wystarczających danych energii (basal/active) do TDEE")
+    basal = [float(d.basal_kj) for d in complete if d.basal_kj is not None]
+    active = [float(d.active_kj) for d in complete if d.active_kj is not None]
 
     # średnie dzienne w kcal
     basal_kcal = _kj_to_kcal(float(np.mean(basal)))
@@ -126,14 +127,14 @@ def compute_tdee(
     tdee = basal_kcal + active_kcal
 
     # sygnały pomocnicze aktywności
-    exercise = [d.exercise_min for d in recent if d.exercise_min is not None]
-    stand = [d.stand_min for d in recent if d.stand_min is not None]
-    effort = [d.physical_effort for d in recent if d.physical_effort is not None]
+    exercise = [d.exercise_min for d in complete if d.exercise_min is not None]
+    stand = [d.stand_min for d in complete if d.stand_min is not None]
+    effort = [d.physical_effort for d in complete if d.physical_effort is not None]
     avg_exercise = round(float(np.mean(exercise)), 1) if exercise else 0.0
     avg_stand = round(float(np.mean(stand)), 1) if stand else 0.0
     avg_effort = round(float(np.mean(effort)), 3) if effort else 0.0
-    n_training = sum(1 for d in recent if (d.exercise_min or 0) > 0)
-    training_ratio = round(n_training / len(recent), 2) if recent else 0.0
+    n_training = sum(1 for d in complete if (d.exercise_min or 0) > 0)
+    training_ratio = round(n_training / len(complete), 2) if complete else 0.0
 
     margin = float(settings.NUTRITION.goal_margin.get(goal, settings.NUTRITION.margin_default))
     target = round(tdee * (1 + margin), 0)
@@ -150,7 +151,7 @@ def compute_tdee(
         basal_kcal=round(basal_kcal, 0),
         active_kcal=round(active_kcal, 0),
         window_days=window,
-        n_days=len(recent),
+        n_days=len(complete),
         window_actual_days=span,
         goal=goal,
         margin_pct=margin,

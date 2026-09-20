@@ -32,6 +32,7 @@ Użycie:
 from __future__ import annotations
 
 import json
+import math
 import sys
 
 # Nazwy aktywności z Apple Watch, które NIE są cardio (siłowe/kalisteniczne).
@@ -80,7 +81,13 @@ def normalize_temp_point(p: dict) -> dict | None:
     """Punkt temperatury: {"date","value"} — przepuszcza jak jest, odrzuca null value."""
     if p.get("value") is None or p.get("date") is None:
         return None
-    return {"date": (p["date"])[:10], "value": float(p["value"])}
+    try:
+        value = float(p["value"])
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(value):
+        return None
+    return {"date": (p["date"])[:10], "value": value}
 
 
 def is_cardio(workout: dict) -> bool:
@@ -122,14 +129,27 @@ def normalize_workout(w: dict, seen_ids: set[str] | None = None) -> dict | None:
         dur = float(w["duration_s"]) / 60.0
     if dur is None:
         return None
+    try:
+        duration = float(dur)
+        avg_hr = float(avg)
+        max_hr = (float(w["max_heart_rate_bpm"])
+                  if w.get("max_heart_rate_bpm") is not None else None)
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(v) for v in (duration, avg_hr) if v is not None):
+        return None
+    if max_hr is not None and not math.isfinite(max_hr):
+        return None
+    if duration <= 0 or avg_hr <= 0:
+        return None
     out = {
         "name": w.get("name"),
         "start": (w.get("start") or "")[:19],
-        "duration_min": float(dur),
-        "avg_heart_rate_bpm": float(avg),
+        "duration_min": duration,
+        "avg_heart_rate_bpm": avg_hr,
     }
-    if w.get("max_heart_rate_bpm") is not None:
-        out["max_heart_rate_bpm"] = float(w["max_heart_rate_bpm"])
+    if max_hr is not None:
+        out["max_heart_rate_bpm"] = max_hr
     return out
 
 

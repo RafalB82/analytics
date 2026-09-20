@@ -9,7 +9,6 @@ from analytics.acwr import ACWRResult, GapInfo
 from analytics.baseline import MetricPoint, TrendResult
 from analytics.exceptions import MissingBaselineError
 from analytics.readiness_integration import (
-    classify_recovery,
     classify_zone,
     compute_full_readiness,
     score_hrv_rhr_sleep,

@@ -156,6 +156,16 @@ class TestComputeTdee:
         assert out["long_window_28d"] is not None
         assert out["long_window_28d"]["window_actual_days"] > 0
 
+    def test_tdee_uses_only_complete_energy_days(self):
+        series = [
+            DailyEnergy(day=date(2026, 8, 1), basal_kj=10000, active_kj=None),
+            DailyEnergy(day=date(2026, 8, 2), basal_kj=None, active_kj=4000),
+            DailyEnergy(day=date(2026, 8, 3), basal_kj=15000, active_kj=3000),
+        ]
+        est = compute_tdee(series, goal="utrzymanie", window_days=3)
+        assert est.n_days == 1
+        assert est.tdee_kcal == round((15000 + 3000) / 4.184, 0)
+
 
 class TestComputeLongWindowTdee:
     def test_returns_none_with_too_few(self):

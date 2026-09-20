@@ -4,10 +4,13 @@ from __future__ import annotations
 import importlib
 import sys
 
+from analytics.baseline import TrendResult
 from analytics.pipeline import (
     PIPELINE,
     AnalyticsPipeline,
     PipelineContext,
+    _serialize_trend,
+    _trend_confidence_label,
     analytics_stage,
     confidence_stage,
     explain_stage,
@@ -277,11 +280,6 @@ def test_pipeline_does_not_import_run_analysis():
 
 
 # --- sekcja 6.2a: rozbicie confidence (trend vs próbka) ---------------------
-
-from analytics.baseline import TrendResult
-from analytics.pipeline import _trend_confidence_label, _serialize_trend
-
-
 class TestTrendConfidenceBreakdown:
     def test_label_high_when_reliable(self):
         assert _trend_confidence_label(True, 0.9) == "High"

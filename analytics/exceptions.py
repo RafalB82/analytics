@@ -33,19 +33,15 @@ class InvalidMetricError(AnalyticsError):
         )
 
 
-class MissingBaselineError(AnalyticsError):
-    """Brak wystarczającej historii do wyliczenia baseline.
-
-    Szczególny przypadek braku danych — używany, gdy wymagane jest minimum
-    punktów historycznych, których nie ma.
-    """
-
-
 class InsufficientDataError(AnalyticsError):
     """Za mało danych do przeprowadzenia analizy.
 
     Fallback-owalny: orchestrator może zwrócić status 'fallback' zamiast błędu.
     """
+
+
+class MissingBaselineError(InsufficientDataError):
+    """Brak wystarczającej historii do wyliczenia baseline."""
 
 
 class InvalidWorkoutError(AnalyticsError):

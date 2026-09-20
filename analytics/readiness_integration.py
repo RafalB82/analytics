@@ -114,7 +114,7 @@ def _cardio_7d_penalty(sessions_7d: int) -> int:
 def classify_recovery(
     base: int,
     hard_override_significant: bool,
-    rhr_trend: "TrendResult | None" = None,
+    rhr_trend: TrendResult | None = None,
 ) -> dict:
     """Oś RECOVERY: czy organizm pokazuje oznaki pogorszenia regeneracji.
 

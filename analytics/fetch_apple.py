@@ -204,6 +204,10 @@ def build_apple_input(
 
     target_date = target_date or (daily[-1]["date"] if daily else date.today())
     tdate = target_date if isinstance(target_date, date) else date.fromisoformat(str(target_date)[:10])
+    daily = [d for d in daily if _d(d) <= tdate]
+    temp_points = [p for p in (temp_points or [])
+                   if p.get("date") is not None
+                   and date.fromisoformat(str(p["date"])[:10]) <= tdate]
 
     return {
         "hrv_series": to_hrv_series(daily),

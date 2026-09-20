@@ -78,6 +78,15 @@ class TestNormalizeDiaries:
         out = mfp_normalize.normalize_diaries({"date": "2026-08-05", "daily_totals": {"calories": 2430.0}})
         assert out == [{"day": "2026-08-05", "kcal": 2430.0, "coffee_count": 0}]
 
+    def test_duplicate_days_keep_last_record(self):
+        raw = [
+            {"date": "2026-08-05", "daily_totals": {"calories": 2000}},
+            {"date": "2026-08-05", "daily_totals": {"calories": 2200}},
+        ]
+        assert mfp_normalize.normalize_diaries(raw) == [
+            {"day": "2026-08-05", "kcal": 2200.0, "coffee_count": 0}
+        ]
+
     def test_skips_invalid(self):
         raw = [
             {"date": "2026-08-05", "daily_totals": {"calories": 2430.0}},

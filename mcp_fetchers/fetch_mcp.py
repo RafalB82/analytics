@@ -352,6 +352,14 @@ def main() -> int:
 
     tmp = os.path.join(BASE, "tmp")
     os.makedirs(tmp, exist_ok=True)
+    # Nie wolno mieszać wyników z poprzedniego przebiegu z częściowym nowym
+    # pobraniem. Usunięcie wyłącznie artefaktów wejściowych jest bezpieczne dla
+    # pozostałych plików użytkownika w katalogu tmp.
+    for filename in ("raw_hevy.json", "raw_apple.json", "raw_mfp.json",
+                     "hevy_workouts.json", "apple_input.json", "mfp_kcal.json"):
+        path = os.path.join(tmp, filename)
+        if os.path.exists(path):
+            os.remove(path)
 
     # --only-cardio implikuje pominięcie Hevy (siła z Hevy nas tu nie interesuje)
     if args.only_cardio:

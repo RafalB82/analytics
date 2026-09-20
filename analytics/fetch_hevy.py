@@ -73,7 +73,11 @@ def _set_load(s: dict) -> float | None:
         return None
     rpe = s.get("rpe")
     # compute_session_load(sets, reps, weight_kg, rpe); sets=1 (per seria)
-    return compute_session_load(sets=1, reps=reps_f, weight_kg=weight_f, rpe=rpe)
+    try:
+        return compute_session_load(sets=1, reps=reps_f, weight_kg=weight_f, rpe=rpe)
+    except ValueError:
+        # Niepoprawne RPE nie może skażać ACWR; zachowaj tonaż bez RPE.
+        return compute_session_load(sets=1, reps=reps_f, weight_kg=weight_f)
 
 
 def workout_daily_load(workout: dict) -> tuple[date, float] | None:

@@ -11,6 +11,7 @@ Zależności: numpy
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import TYPE_CHECKING
@@ -78,6 +79,12 @@ def compute_session_load(
     """
     tonnage = sets * reps * weight_kg
     if rpe is not None:
+        try:
+            rpe = float(rpe)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("RPE musi być liczbą w zakresie 1-10") from exc
+        if not math.isfinite(rpe) or not 1 <= rpe <= 10:
+            raise ValueError("RPE musi być skończone i mieścić się w zakresie 1-10")
         return tonnage * rpe
     return tonnage
 

@@ -31,9 +31,15 @@ def validate_input(payload: dict) -> tuple[str, date, dict, list, list, list, li
     apple_daily = payload.get("apple_daily", [])
     if not apple_daily:
         raise InsufficientDataError("missing_apple_daily: brak danych z Apple")
+    for name in ("apple_daily", "hevy_workouts", "apple_workouts", "cardio_sessions"):
+        value = payload.get(name, [])
+        if not isinstance(value, list):
+            raise InvalidMetricError(name, type(value).__name__, "oczekiwano listy")
 
     target = _parse_target(payload.get("target_date"))
     params = payload.get("params", {})
+    if not isinstance(params, dict):
+        raise InvalidMetricError("params", type(params).__name__, "oczekiwano obiektu")
     hevy_workouts = payload.get("hevy_workouts", [])
     apple_workouts = payload.get("apple_workouts", [])
     cardio_sessions = payload.get("cardio_sessions", [])

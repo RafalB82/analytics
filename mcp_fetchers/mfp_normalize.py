@@ -119,9 +119,10 @@ def normalize_diaries(raw: dict | list) -> list[dict]:
             r = extract_day_kcal(d)
             if r:
                 out.append(r)
-        # sortuj chronologicznie (determinizm)
-        out.sort(key=lambda x: x["day"])
-        return out
+        # Jeden dzień może pojawić się dwukrotnie przy nakładających się
+        # pobraniach. Zachowaj ostatni rekord, aby nie podwajać spożycia.
+        deduped = {item["day"]: item for item in out}
+        return [deduped[day] for day in sorted(deduped)]
     return []
 
 

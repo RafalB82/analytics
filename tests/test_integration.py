@@ -179,7 +179,7 @@ class TestRunEndToEnd:
         # sekcja 6.2a: rozbicie confidence (trend vs próbka) w baseline_trends
         result = run(_payload())
         bt = result["baseline_trends"]
-        for metric, label in (("hrv", "hrv"), ("rhr", "rhr")):
+        for metric, _label in (("hrv", "hrv"), ("rhr", "rhr")):
             t = bt.get(metric)
             assert t is not None, f"brak trendu {metric}"
             # oryginalne pola zachowane (wsteczna kompatybilność)

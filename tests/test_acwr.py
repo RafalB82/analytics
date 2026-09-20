@@ -39,8 +39,13 @@ class TestComputeSessionLoad:
         assert compute_session_load(sets=3, reps=5, weight_kg=100.0, rpe=8) == 12000.0
 
     def test_rpe_zero_returns_zero(self):
-        # RPE=0 -> tonaż*0 = 0 (RPE jest jawnie podane, więc mnożymy)
-        assert compute_session_load(sets=1, reps=10, weight_kg=20.0, rpe=0) == 0.0
+        with pytest.raises(ValueError):
+            compute_session_load(sets=1, reps=10, weight_kg=20.0, rpe=0)
+
+    @pytest.mark.parametrize("rpe", [-1, 11, float("nan"), float("inf")])
+    def test_invalid_rpe_is_rejected(self, rpe):
+        with pytest.raises(ValueError):
+            compute_session_load(sets=1, reps=10, weight_kg=20.0, rpe=rpe)
 
 
 class TestAggregateAndFill:

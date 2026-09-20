@@ -184,10 +184,11 @@ def analytics_stage(ctx: PipelineContext) -> PipelineContext:
     )
     ctx.goal_info = nutr_mod.build_goal_output(m["energy_series"], m["weight_info"], ctx.params)
 
-    # bilans energetyczny: zjedzone kcal (MFP) vs wydatek (target_kcal z TDEE).
+    # Bilans porównuje spożycie z rzeczywistym wydatkiem TDEE. Cel dietetyczny
+    # jest osobną wartością i nie może być raportowany jako expenditure.
     # Kumulujący się niedobór = sygnał ryzyka urazu/infekcji (patrz energy_balance).
     from . import energy_balance as eb_mod
-    target_kcal = ctx.goal_info.get("target_kcal") if ctx.goal_info.get("status") == "ok" else None
+    target_kcal = ctx.goal_info.get("tdee_kcal") if ctx.goal_info.get("status") == "ok" else None
     ctx.energy_balance = eb_mod.build_energy_balance_output(
         ctx.mfp_daily_kcal, target_kcal,
     ) if target_kcal else {"status": "skipped", "reason": "brak target_kcal (TDEE niedostępny)"}

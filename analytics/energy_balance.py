@@ -68,7 +68,7 @@ class EnergyBalanceResult:
     # Nie tylko cicho wyłączamy niekompletne dni — jawnie sygnalizujemy, że
     # ocena bilansu opiera się na niepełnych danych (data_quality obniżona).
     data_quality: str = "high"   # high | medium | low
-    data_quality_notes: list[str] = None  # powody obniżenia (np. niekompletne dni)
+    data_quality_notes: list[str] | None = None  # powody obniżenia (np. niekompletne dni)
 
     def __post_init__(self):
         if self.data_quality_notes is None:

@@ -148,3 +148,11 @@ class TestBuildAppleInput:
             assert key in inp
         assert len(inp["energy_series"]) == 1
         assert inp["weight_info"]["present"] is True
+
+    def test_excludes_points_after_target(self):
+        daily = [
+            _day("2026-08-07", basal_energy_burned=14000.0, active_energy=3000.0),
+            _day("2026-08-08", basal_energy_burned=14000.0, active_energy=3000.0),
+        ]
+        inp = build_apple_input(daily, date(2026, 8, 7))
+        assert [p.day.isoformat() for p in inp["hrv_series"]] == ["2026-08-07"]

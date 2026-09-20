@@ -2,9 +2,8 @@
 acwr.py
 Acute:Chronic Workload Ratio na podstawie danych z Hevy.
 
-Referencja metodologiczna: Gabbett (2016), "The training-injury
-prevention paradox". Strefa 0.8-1.3 = optymalna, >1.5 = podwyższone
-ryzyko przeciążenia/kontuzji.
+ACWR jest wskaźnikiem relacji acute/chronic, a nie bezpośrednim pomiarem
+zmęczenia, regeneracji ani ryzyka kontuzji.
 
 Zależności: numpy
 """
@@ -33,7 +32,7 @@ ACWR_LOOKBACK_DAYS = 35
 @dataclass
 class SessionLoad:
     day: date
-    load: float                # sRPE-load (tonaż x RPE) albo sam tonaż
+    load: float                # rpe_weighted_tonnage albo sam tonaż
 
 
 @dataclass
@@ -41,7 +40,7 @@ class ACWRResult:
     acute_load: float          # średnia dzienna z ostatnich 7 dni
     chronic_load: float        # średnia dzienna z ostatnich 28 dni (EWMA)
     ratio: float
-    zone: str                  # "niedociążenie" | "optymalna" | "podwyższone ryzyko" | "wysokie ryzyko"
+    zone: str                  # below_reference | reference | above_reference | high_ratio
 
 
 @dataclass
@@ -73,7 +72,7 @@ def compute_session_load(
     """
     Obciążenie pojedynczej sesji.
     Jeśli masz RPE z Hevy (loguj je przy każdej serii, jeśli jeszcze
-    nie logujesz) -> sRPE-load = tonaż * RPE, lepiej koreluje z
+    nie logujesz) -> rpe_weighted_tonnage = tonaż * RPE, lepiej koreluje z
     faktycznym zmęczeniem niż sam tonaż.
     Bez RPE: zwraca sam tonaż (sets * reps * weight_kg).
     """
@@ -279,17 +278,17 @@ def compute_chronic_load(
 
 
 def acwr_ratio(acute: float, chronic: float) -> ACWRResult:
-    """Klasyfikacja strefy ryzyka na podstawie stosunku acute/chronic."""
+    """Klasyfikacja neutralnej strefy na podstawie stosunku acute/chronic."""
     ratio = 0.0 if chronic == 0 else round(acute / chronic, 2)
 
     if ratio < settings.ACWR.zone_low:
-        zone = "niedociążenie"
+        zone = "below_reference"
     elif ratio <= settings.ACWR.zone_optimal_high:
-        zone = "optymalna"
+        zone = "reference"
     elif ratio <= settings.ACWR.zone_elevated_high:
-        zone = "podwyższone ryzyko"
+        zone = "above_reference"
     else:
-        zone = "wysokie ryzyko"
+        zone = "high_ratio"
 
     logger.info("ACWR: acute=%.1f chronic=%.1f ratio=%.2f strefa=%s", acute, chronic, ratio, zone)
 
@@ -307,9 +306,9 @@ def acwr_readiness_modifier(acwr: ACWRResult) -> int:
     """
     if acwr.zone == settings.ACWR.zone_insufficient:
         return 0
-    if acwr.zone == "wysokie ryzyko":
+    if acwr.zone == "high_ratio":
         return 2
-    if acwr.zone == "podwyższone ryzyko":
+    if acwr.zone == "above_reference":
         return 1
     return 0
 

@@ -299,8 +299,12 @@ Cardio jest analizowane osobno od treningu siłowego.
 Powodem jest różnica jednostek:
 
 ```text
-siła   → tonaż / sRPE-load
-cardio → TRIMP
+ siła   → rpe_weighted_tonnage (tonaż × RPE)
+ cardio → TRIMP
+
+`rpe_weighted_tonnage` nie jest klasycznym session-RPE load. Jest własnym
+wskaźnikiem obciążenia siłowego: tonażem ważonym RPE. Cardio używa osobnej
+jednostki TRIMP i osobnego ACWR.
 ```
 
 Nie są one sumowane w jeden fizyczny wskaźnik obciążenia.

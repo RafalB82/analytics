@@ -10,7 +10,7 @@ logowanie i obsługę błędów.
 
 ŹRÓDŁA DANYCH (TYLKO Apple + Hevy + MFP):
     - Apple MCP  -> HRV, RHR, sen          (apple__get_daily_activity_range)
-    - Hevy  MCP  -> tonaż + RPE (sRPE-load)-> ACWR
+    - Hevy  MCP  -> tonaż + RPE (rpe_weighted_tonnage) -> ACWR
     - MFP        -> waga (OPCJONALNA, obecnie brak danych u Rafała)
 
 SKRYPT NIE WOŁA MCP — agent wstrzykuje dane jako JSON. Dzięki temu jest
@@ -100,7 +100,6 @@ def run(payload: dict) -> dict[str, Any]:
             hevy_workouts=payload.get("hevy_workouts", []),
             apple_workouts=payload.get("apple_workouts", []),
             cardio_sessions=payload.get("cardio_sessions", []),
-            mfp_weight=payload.get("mfp_weight") or [],
             mfp_daily_kcal=payload.get("mfp_daily_kcal") or [],
             apple_temp=payload.get("apple_temp", []),
         ))

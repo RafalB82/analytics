@@ -22,7 +22,7 @@ def _series(values: list[float], end: date | None = None) -> list[MetricPoint]:
             for i, v in enumerate(values)]
 
 
-def _acwr(ratio: float = 1.0, zone: str = "optymalna") -> ACWRResult:
+def _acwr(ratio: float = 1.0, zone: str = "reference") -> ACWRResult:
     return ACWRResult(acute_load=100, chronic_load=100, ratio=ratio, zone=zone)
 
 
@@ -135,14 +135,14 @@ class TestComputeFullReadiness:
             spo2_confirmed=False,
         )
         assert out.hard_override is not None
-        assert out.zone == "czerwona"
+        assert out.zone == "zielona"
 
     def test_acwr_penalty_applied(self):
         out = compute_full_readiness(
             hrv_series=_series([50] * 8),
             rhr_series=_series([45] * 8),
             sleep_hours_today=8.0,
-            acwr_result=_acwr(zone="wysokie ryzyko"),
+            acwr_result=_acwr(zone="high_ratio"),
             temp_alert=_temp(),
             spo2_confirmed=False,
         )
@@ -177,7 +177,7 @@ class TestComputeFullReadiness:
             hrv_series=_series([50] * 8),
             rhr_series=_series([45] * 8),
             sleep_hours_today=8.0,
-            acwr_result=_acwr(zone="niedociążenie", ratio=0.4),
+            acwr_result=_acwr(zone="below_reference", ratio=0.4),
             temp_alert=_temp(),
             spo2_confirmed=False,
             gap=_gap(detected=True, gap_days=10, severity="krótka", resuming_today=True),
@@ -193,7 +193,7 @@ class TestComputeFullReadiness:
             hrv_series=_series([50] * 8),
             rhr_series=_series([45] * 8),
             sleep_hours_today=8.0,
-            acwr_result=_acwr(zone="niedociążenie", ratio=0.4),
+            acwr_result=_acwr(zone="below_reference", ratio=0.4),
             temp_alert=_temp(),
             spo2_confirmed=False,
         )
@@ -216,7 +216,7 @@ class TestAxesAndVerdict:
     load (obciążenie) od fatigue (zmęczenie).
     """
 
-    def _readiness(self, *, acwr_zone="optymalna", acwr_ratio=1.0,
+    def _readiness(self, *, acwr_zone="reference", acwr_ratio=1.0,
                    cardio_7d_sessions=0, temp=None, sleep=None, rpe_cov=None):
         common = dict(
             hrv_series=_series([45] * 8),
@@ -262,7 +262,7 @@ class TestAxesAndVerdict:
         rhr_series = _series([55] * 8)
         out2 = compute_full_readiness(
             hrv_series=hrv_series, rhr_series=rhr_series, sleep_hours_today=8.0,
-            acwr_result=_acwr(zone="optymalna", ratio=1.0),
+            acwr_result=_acwr(zone="reference", ratio=1.0),
             temp_alert=_temp(), spo2_confirmed=False, cardio_7d_sessions=3,
         )
         assert out2.recovery["status"] == "degraded"
@@ -275,7 +275,7 @@ class TestAxesAndVerdict:
         rhr_series = _series([55] * 6 + [62, 64])   # wzrost RHR -> base +
         out = compute_full_readiness(
             hrv_series=hrv_series, rhr_series=rhr_series, sleep_hours_today=8.0,
-            acwr_result=_acwr(zone="optymalna", ratio=1.0),
+            acwr_result=_acwr(zone="reference", ratio=1.0),
             temp_alert=_temp(), spo2_confirmed=False, cardio_7d_sessions=3,
         )
         assert out.recovery["status"] == "critical"
@@ -288,25 +288,25 @@ class TestAxesAndVerdict:
         rhr_series = _series([55] * 6 + [62, 64])
         out = compute_full_readiness(
             hrv_series=hrv_series, rhr_series=rhr_series, sleep_hours_today=8.0,
-            acwr_result=_acwr(zone="niedociążenie", ratio=0.7),
+            acwr_result=_acwr(zone="below_reference", ratio=0.7),
             temp_alert=_temp(), spo2_confirmed=False, cardio_7d_sessions=0,
         )
-        assert out.load["status"] == "low"
+        assert out.load["status"] == "moderate"
         assert out.verdict["zone"] == "green"
 
-    def test_hard_override_forces_verdict_red(self):
+    def test_temperature_signal_does_not_force_verdict_red(self):
         temp = TempAlert(triggered=True, deviation_c=0.6, baseline_c=36.0,
                          severity="znacząca", combined_with_hrv_drop=False)
         out = self._readiness(temp=temp)
-        assert out.verdict["zone"] == "red"
-        assert "override" in out.verdict["rationale"]
+        assert out.verdict["zone"] == "green"
+        assert "brak podstaw" in out.verdict["rationale"]
 
     def test_data_quality_flags(self):
         # brak snu + cardio niewystarczające -> nisza wiarygodność
         out = compute_full_readiness(
             hrv_series=_series([45] * 8), rhr_series=_series([55] * 8),
             sleep_hours_today=None,   # brak snu
-            acwr_result=_acwr(zone="optymalna", ratio=1.0),
+            acwr_result=_acwr(zone="reference", ratio=1.0),
             cardio_acwr=_acwr(zone="niewystarczające dane", ratio=2.76),
             temp_alert=_temp(), spo2_confirmed=False,
             rpe_coverage_pct=66.9,
@@ -333,7 +333,7 @@ class TestAxesAndVerdict:
         out = compute_full_readiness(
             hrv_series=_series([45] * 8), rhr_series=_series([55] * 8),
             sleep_hours_today=8.0,
-            acwr_result=_acwr(zone="optymalna", ratio=1.0),
+            acwr_result=_acwr(zone="reference", ratio=1.0),
             temp_alert=_temp(), spo2_confirmed=False,
             rhr_trend=self._rising_rhr(),
         )
@@ -348,7 +348,7 @@ class TestAxesAndVerdict:
         out = compute_full_readiness(
             hrv_series=hrv_series, rhr_series=_series([55] * 8),
             sleep_hours_today=8.0,
-            acwr_result=_acwr(zone="optymalna", ratio=1.0),
+            acwr_result=_acwr(zone="reference", ratio=1.0),
             temp_alert=_temp(), spo2_confirmed=False,
             rhr_trend=self._rising_rhr(),
         )
@@ -361,7 +361,7 @@ class TestAxesAndVerdict:
         out = compute_full_readiness(
             hrv_series=_series([45] * 8), rhr_series=_series([55] * 8),
             sleep_hours_today=8.0,
-            acwr_result=_acwr(zone="optymalna", ratio=1.0),
+            acwr_result=_acwr(zone="reference", ratio=1.0),
             temp_alert=_temp(), spo2_confirmed=False,
             rhr_trend=self._rising_rhr(),
         )
@@ -372,7 +372,7 @@ class TestAxesAndVerdict:
         out = compute_full_readiness(
             hrv_series=_series([45] * 8), rhr_series=_series([55] * 8),
             sleep_hours_today=8.0,
-            acwr_result=_acwr(zone="optymalna", ratio=1.0),
+            acwr_result=_acwr(zone="reference", ratio=1.0),
             temp_alert=_temp(), spo2_confirmed=False,
             rhr_trend=self._rising_rhr(reliable=False, r2=0.02),
         )
@@ -385,7 +385,7 @@ class TestAxesAndVerdict:
         out = compute_full_readiness(
             hrv_series=_series([45] * 8), rhr_series=_series([55] * 8),
             sleep_hours_today=8.0,
-            acwr_result=_acwr(zone="optymalna", ratio=1.0),
+            acwr_result=_acwr(zone="reference", ratio=1.0),
             temp_alert=_temp(), spo2_confirmed=False,
             rhr_trend=stable,
         )

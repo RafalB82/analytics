@@ -37,7 +37,7 @@ class ReadinessOutput:
     zone: str                    # "zielona" | "żółta" | "czerwona" (legacy)
     max_rpe: str
     volume_note: str
-    hard_override: str | None    # np. z temperatury — nadpisuje strefę niezależnie od total_score
+    hard_override: str | None    # legacy alias; temperatura jest silnym sygnałem recovery
     trend_note: str | None
     sleep_missing: bool            # True = brak danych o śnie (składnik snu pominięty w score)
     gap_note: str | None            # ostrzeżenie o powrocie po luce treningowej (nie zmienia total_score)
@@ -129,9 +129,7 @@ def classify_recovery(
 
     Status: ok | degraded | critical.
     """
-    if hard_override_significant:
-        status = "critical"
-    elif base <= settings.READINESS.zone_green_max:   # 0-1 pkt -> brak oznak
+    if base <= settings.READINESS.zone_green_max:   # 0-1 pkt -> brak oznak
         status = "ok"
     elif base <= settings.READINESS.zone_yellow_max:  # 2-3 pkt -> pojedyncze oznaki
         status = "degraded"
@@ -157,23 +155,36 @@ def classify_recovery(
     }
 
 
-def classify_load(acwr_penalty: int) -> dict:
+def classify_load(
+    strength_acute: float = 0.0,
+    strength_chronic: float = 0.0,
+    cardio_acute: float = 0.0,
+    cardio_chronic: float = 0.0,
+    cardio_7d_sessions: int = 0,
+) -> dict:
     """Oś LOAD: obciążenie treningowe (bodźce), niezależnie od regeneracji.
 
-    Opiera się na sumarycznej karze obciążenia (`acwr_penalty` — siła ratio
-    + cardio 7d). Status: low | moderate | high | very_high.
-    ZA UWAGĘ: LOAD to obciążenie, RECOVERY to zmęczenie. Wysoki LOAD bez
-    osłabionej RECOVERY NIE jest sygnałem czerwonym — rozstrzyga werdykt.
+    Klasyfikuje aktualne obciążenie na podstawie rzeczywistych acute loads.
+    Kara ACWR jest osobnym sygnałem i nie jest używana jako proxy LOAD.
     """
-    if acwr_penalty <= 0:
+    strength_spike = (
+        strength_chronic > 0 and strength_acute / strength_chronic >= 1.5
+    )
+    cardio_spike = cardio_chronic > 0 and cardio_acute / cardio_chronic >= 1.5
+    spike = strength_spike or cardio_spike
+    if strength_acute <= 0 and cardio_acute <= 0 and cardio_7d_sessions == 0:
         status = "low"
-    elif acwr_penalty == 1:
+    elif spike or cardio_7d_sessions >= settings.ACWR.cardio_7d_penalty_thresholds[1]:
         status = "high"
-    else:  # 2+
-        status = "very_high"
+    else:
+        status = "moderate"
     return {
         "status": status,
-        "acwr_penalty": acwr_penalty,
+        "strength_absolute": round(strength_acute, 1),
+        "cardio_absolute": round(cardio_acute, 1),
+        "strength_spike": strength_spike,
+        "cardio_spike": cardio_spike,
+        "session_spike": spike,
     }
 
 
@@ -187,7 +198,7 @@ def classify_data_quality(
     Składowe:
       - brak snu (sleep_missing) -> obniża,
       - cardio ACWR niewystarczające (za mało dni) -> obniża (ratio niemożliwe),
-      - niskie pokrycie RPE -> obniża (sRPE-load mniej wiarygodny).
+       - niskie pokrycie RPE -> obniża (rpe_weighted_tonnage mniej wiarygodny).
     Status: high | medium | low.
     """
     notes: list[str] = []
@@ -196,7 +207,7 @@ def classify_data_quality(
     if cardio_insufficient:
         notes.append("ACWR cardio niewystarczające dane (za mało dni) — ratio niekarzące, diagnostyczne")
     if rpe_coverage_pct is not None and rpe_coverage_pct < 80:
-        notes.append(f"Pokrycie RPE ({rpe_coverage_pct:.0f}%) niskie — sRPE-load mniej wiarygodny")
+        notes.append(f"Pokrycie RPE ({rpe_coverage_pct:.0f}%) niskie — rpe_weighted_tonnage mniej wiarygodny")
 
     if not notes:
         status = "high"
@@ -229,14 +240,6 @@ def build_verdict(recovery: dict, load: dict, hard_override: str | None) -> dict
     - LOAD wysoki + RECOVERY critical -> red (duże obciążenie + silne oznaki).
     - hard_override (znacząca temperatura) -> red, niezależnie od osi.
     """
-    if hard_override:
-        return {
-            "zone": "red",
-            "max_rpe": "RPE 7 lub regeneracja",
-            "advice": "objętość -30-40% (override: temperatura)",
-            "rationale": "Twardy override z temperatury nadgarstka (znacząca) — niezależnie od osi LOAD/RECOVERY.",
-        }
-
     load_status = load["status"]
     rec_status = recovery["status"]
 
@@ -327,12 +330,8 @@ def compute_full_readiness(
     if trend and trend.reliable and trend.direction == "spadający":
         trend_note = "HRV w trendzie spadkowym od kilku dni — obserwuj, niezależnie od dzisiejszego wyniku."
 
-    # twardy override z temperatury — nadpisuje strefę niezależnie od total_score
+    # Temperatura pozostaje jawnym sygnałem, ale nie wymusza legacy strefy.
     hard_override = build_temp_override_message(temp_alert, spo2_confirmed)
-    if hard_override and temp_alert.severity == "znacząca":
-        zone = "czerwona"
-        max_rpe = "RPE 7 lub regeneracja"
-        volume_note = "objętość -30-40% (override: temperatura)"
 
     # luka treningowa — OSTRZEŻENIE, nie modyfikator punktowy ani hard
     # override strefy. ACWR ratio po przerwie zwykle pokazuje "niedociążenie"
@@ -346,10 +345,16 @@ def compute_full_readiness(
     # Rozdzielenie LOAD od RECOVERY + DATA_QUALITY + werdykt semantyczny.
     # Istniejący scoring (base/acwr_penalty/total/zone) zostaje BEZ ZMIAN —
     # osie i verdict to dodatkowa, nadrzędna interpretacja dla warstwy LLM.
-    hard_override_significant = bool(hard_override and temp_alert.severity == "znacząca")
+    hard_override_significant = False
 
     recovery = classify_recovery(base, hard_override_significant, rhr_trend)
-    load = classify_load(acwr_penalty)
+    load = classify_load(
+        strength_acute=acwr_result.acute_load,
+        strength_chronic=acwr_result.chronic_load,
+        cardio_acute=cardio_acwr.acute_load if cardio_acwr else 0.0,
+        cardio_chronic=cardio_acwr.chronic_load if cardio_acwr else 0.0,
+        cardio_7d_sessions=cardio_7d_sessions,
+    )
 
     # cardio ACWR w strefie „niewystarczające dane" = nie karze, ale obniża
     # wiarygodność oceny obciążenia cardio
@@ -363,7 +368,7 @@ def compute_full_readiness(
         rpe_coverage_pct=rpe_coverage_pct,
     )
 
-    verdict = build_verdict(recovery, load, hard_override)
+    verdict = build_verdict(recovery, load, None)
 
     return ReadinessOutput(
         base_score=base,

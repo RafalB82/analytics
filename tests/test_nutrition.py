@@ -133,10 +133,9 @@ class TestComputeTdee:
         ]
         est = compute_tdee(series, goal="utrzymanie", window_days=7)
         assert est.window_days == 7
-        assert est.n_days == 7
-        # rozpiętość: dzień 1..12 -> 12 dni kalendarzowych, nie 7
-        assert est.window_actual_days == 12
-        assert est.window_actual_days > est.window_days
+        assert est.n_days == 4
+        assert est.window_actual_days == 6
+        assert est.window_actual_days <= est.window_days
 
     def test_gap_reported_through_build_goal_output(self):
         """window_actual_days dociera do outputu build_goal_output (kontekst dla LLM)
@@ -150,7 +149,7 @@ class TestComputeTdee:
         ]
         out = build_goal_output(series, {"present": False}, {"phase": "utrzymanie"})
         assert out["status"] == "ok"
-        assert out["window_actual_days"] > out["window_days"]
+        assert out["window_actual_days"] == out["window_days"]
         # long_window_28d: rozpiętość jest raportowana jawnie; tu zakres danych (17d)
         # < żądane 28d, więc actual < window — chodzi o to, że pole w ogóle wyszło
         assert out["long_window_28d"] is not None

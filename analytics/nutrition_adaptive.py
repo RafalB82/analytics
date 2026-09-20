@@ -18,7 +18,7 @@ Zależności: numpy
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 import numpy as np
@@ -50,9 +50,7 @@ class TDEEEstimate:
     active_kcal: float          # średni active / dzień
     window_days: int            # użyte okno (7 lub 28)
     n_days: int                 # ile dni z kompletem danych weszło do średniej
-    window_actual_days: int     # rozpiętość kalendarzowa objęta oknem (od najstarszego
-                                # do najnowszego punktu + 1) — gdy są dziury w danych,
-                                # > window_days i sygnalizuje rozciągnięcie okna
+    window_actual_days: int     # faktyczna rozpiętość kalendarzowa objęta oknem
     goal: str                   # "utrzymanie" | "redukcja" | "masa"
     margin_pct: float           # marża % (0 / -0.15 / +0.10)
     target_kcal: float          # tdee + marża → CEL KALORYCZNY
@@ -93,6 +91,8 @@ def compute_tdee(
 ) -> TDEEEstimate:
     """
     TDEE z aktywności Apple (basal + active) + marża wg celu.
+    `window_days` oznacza zakres kalendarzowy; `n_days` oznacza kompletne
+    punkty wykorzystane do średniej.
 
     energy_series: lista DailyEnergy (dzień, basal_kj, active_kj, ...) —
     posortowana rosnąco wg dnia.
@@ -106,8 +106,15 @@ def compute_tdee(
     window = window_days or settings.NUTRITION.activity_window_days
     compute_long = settings.NUTRITION.compute_long_window if compute_long is None else compute_long
 
-    # wybierz ostatnie `window` dni
-    recent = energy_series[-window:]
+    # Okno jest kalendarzowe, nie jest liczbą ostatnich poprawnych rekordów.
+    # Dzięki temu 7 punktów rozciągniętych na 10 dni nie jest raportowane jako
+    # średnia z ostatnich 7 dni kalendarzowych.
+    if not energy_series:
+        recent = []
+    else:
+        end_day = energy_series[-1].day
+        start_day = end_day - timedelta(days=window - 1)
+        recent = [d for d in energy_series if start_day <= d.day <= end_day]
 
     # Rozpiętość kalendarzowa okna: od najstarszego do najnowszego punktu + 1.
     # Jeśli w danych są dziury, `recent` zawiera `window` punktów rozciągniętych

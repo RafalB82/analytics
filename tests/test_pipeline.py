@@ -29,7 +29,6 @@ def _ctx(payload: dict) -> PipelineContext:
         params=payload.get("params", {}),
         apple_daily=payload.get("apple_daily", []),
         hevy_workouts=payload.get("hevy_workouts", []),
-        mfp_weight=payload.get("mfp_weight") or [],
         apple_temp=payload.get("apple_temp", []),
     )
 

@@ -19,7 +19,7 @@ FILOZOFIA (zgodna z repozytorium):
 
 WEJŚCIE:
   eaten:  lista {day: date, kcal: float} — zjedzone kcal z MFP (dziennik).
-  tdee:   średni dzienny wydatek (kcal) z nutrition_adaptive (lub target_kcal,
+  tdee:   średni dzienny reference TDEE (kcal) z nutrition_adaptive (lub target_kcal,
           jeśli compare_against_target).
   target: target_date (data referencyjna; domyślnie ostatni dzień serii).
 
@@ -86,7 +86,7 @@ def compute_energy_balance(
     od ostatniego dnia z danymi i klasyfikuje ryzyko skumulowanego niedoboru.
 
     eaten: lista {day, kcal} (zjedzone z MFP), może być niepełna / pusta.
-    expenditure_kcal: średni dzienny wydatek (TDEE lub target) — stały.
+    expenditure_kcal: referencyjny średni dzienny TDEE — stały w oknie.
     window_days / min_valid_days: z configu ENERGY_BALANCE.
     """
     window = window_days or settings.ENERGY_BALANCE.balance_window_days

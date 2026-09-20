@@ -152,24 +152,24 @@ class TestAcwrRatio:
     def test_optimal_zone(self):
         res = acwr_ratio(acute=100, chronic=100)
         assert res.ratio == 1.0
-        assert res.zone == "optymalna"
+        assert res.zone == "reference"
 
     def test_underload_zone(self):
         res = acwr_ratio(acute=50, chronic=100)
-        assert res.zone == "niedociążenie"
+        assert res.zone == "below_reference"
 
     def test_elevated_zone(self):
         res = acwr_ratio(acute=140, chronic=100)
-        assert res.zone == "podwyższone ryzyko"
+        assert res.zone == "above_reference"
 
     def test_high_risk_zone(self):
         res = acwr_ratio(acute=160, chronic=100)
-        assert res.zone == "wysokie ryzyko"
+        assert res.zone == "high_ratio"
 
     def test_chronic_zero_sets_ratio_zero(self):
         res = acwr_ratio(acute=100, chronic=0)
         assert res.ratio == 0.0
-        assert res.zone == "niedociążenie"
+        assert res.zone == "below_reference"
 
 
 class TestReadinessModifier:
@@ -276,7 +276,7 @@ class TestBuildAcwr:
         out = build_acwr(workouts, target)
         assert set(out) == {"result", "acute", "chronic", "rpe_coverage", "daily_loads", "gap"}
         assert out["result"].ratio == 1.0
-        assert out["result"].zone == "optymalna"
+        assert out["result"].zone == "reference"
         # daily_loads: okno start..end włącznie = ACWR_LOOKBACK_DAYS + 1 dni
         assert len(out["daily_loads"]) == ACWR_LOOKBACK_DAYS + 1
 
@@ -289,12 +289,12 @@ class TestBuildAcwr:
             w = 1000.0 if i < 7 else 100.0
             workouts.append(_hevy_load(target - timedelta(days=i), weight=w))
         out = build_acwr(workouts, target)
-        assert out["result"].zone in ("podwyższone ryzyko", "wysokie ryzyko")
+        assert out["result"].zone in ("above_reference", "high_ratio")
 
     def test_empty_workouts_underload(self):
         """Brak treningów -> niedociążenie, ratio 0."""
         out = build_acwr([], date(2026, 8, 7))
-        assert out["result"].zone == "niedociążenie"
+        assert out["result"].zone == "below_reference"
         assert out["result"].ratio == 0.0
 
     def test_rpe_coverage_reported(self):

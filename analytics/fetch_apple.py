@@ -17,6 +17,7 @@ Dzięki temu jest deterministyczny i testowalny offline.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
@@ -35,6 +36,14 @@ logger = get_logger(__name__)
 # Minimalna liczba punktów HRV do analizy (baseline + trend) — konsumowana
 # przez build_apple_models. Wędruje z właścicielem (nie do walidatora).
 MIN_HRV_POINTS = 6
+
+
+@dataclass
+class WeightSample:
+    """Punkt masy ciała z Apple Health."""
+
+    day: date
+    weight_kg: float
 
 
 def _d(d: dict) -> date:
@@ -187,6 +196,20 @@ def latest_weight(daily: list[dict]) -> dict:
     return {"present": False}
 
 
+def to_weight_series(daily: list[dict]) -> list[WeightSample]:
+    """Buduje posortowaną serię wielopunktowych pomiarów masy z Apple Health."""
+    out = []
+    for d in daily:
+        value = d.get("weight_body_mass")
+        if value is None:
+            continue
+        weight_kg = _val_weight(value)
+        if weight_kg is not None:
+            out.append(WeightSample(day=_d(d), weight_kg=weight_kg))
+    out.sort(key=lambda p: p.day)
+    return out
+
+
 def build_apple_input(
     daily: list[dict],
     target_date: date | None = None,
@@ -216,6 +239,7 @@ def build_apple_input(
         "temp_series": to_temp_series_from_points(temp_points) if temp_points else to_temp_series(daily),
         "energy_series": to_energy_series(daily),
         "weight_info": latest_weight(daily),
+        "weight_series": to_weight_series(daily),
     }
 
 

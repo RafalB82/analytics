@@ -71,7 +71,7 @@ def temp_deviation_alert(
     hrv_dropped: bool = False,
 ) -> TempAlert:
     """
-    Twardy override, nie punkt do sumy scoringu.
+    Silny sygnał regeneracji, nie twardy override verdictu.
     threshold_c=0.3 to konserwatywny próg startowy (Apple sam raportuje
     już wygładzone odchylenie) — obserwuj swoje dane przez 2-3 tyg. i
     skoryguj próg do swojej faktycznej wariancji.
@@ -132,8 +132,8 @@ def build_temp_override_message(alert: TempAlert, spo2_confirmed: bool) -> str |
     if alert.severity == "znacząca":
         return (
             f"UWAGA: temperatura nadgarstka +{alert.deviation_c}°C vs baseline, "
-            f"jednocześnie ze spadkiem HRV. Traktuj gotowość jako czerwoną "
-            f"niezależnie od sumy punktów."
+            f"jednocześnie ze spadkiem HRV. To silny sygnał pogorszenia regeneracji; "
+            f"nie jest diagnozą i nie wymusza samodzielnie czerwonego verdictu."
         )
     return (
         f"Podwyższona temperatura nadgarstka (+{alert.deviation_c}°C). "

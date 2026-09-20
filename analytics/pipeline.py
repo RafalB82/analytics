@@ -28,7 +28,6 @@ from . import stability as stab_mod
 from . import temperature as temp_mod
 from .config import settings
 from .fetch_apple import build_apple_models
-from .fetch_mfp import to_weight_series
 from .readiness_integration import compute_full_readiness
 from .validators import validate_input
 
@@ -107,7 +106,6 @@ class PipelineContext:
     hevy_workouts: list = field(default_factory=list)
     cardio_sessions: list = field(default_factory=list)
     apple_workouts: list = field(default_factory=list)
-    mfp_weight: list = field(default_factory=list)
     mfp_daily_kcal: list = field(default_factory=list)  # zjedzone kcal z MFP diary
     apple_temp: list = field(default_factory=list)
 
@@ -141,12 +139,12 @@ def input_validation_stage(ctx: PipelineContext) -> PipelineContext:
     """Stage 1: walidacja wejścia + rozbicie payloadu."""
     (ctx.source, ctx.target, ctx.params, ctx.apple_daily,
      ctx.hevy_workouts, ctx.apple_workouts, ctx.cardio_sessions,
-     ctx.mfp_weight, ctx.apple_temp) = validate_input(
+     _, ctx.apple_temp) = validate_input(
         {"source": ctx.source, "target_date": ctx.target,
          "apple_daily": ctx.apple_daily, "hevy_workouts": ctx.hevy_workouts,
          "apple_workouts": ctx.apple_workouts,
          "cardio_sessions": ctx.cardio_sessions,
-         "mfp_weight": ctx.mfp_weight, "apple_temp": ctx.apple_temp,
+          "mfp_weight": [], "apple_temp": ctx.apple_temp,
          "params": ctx.params})
     return ctx
 
@@ -263,8 +261,8 @@ def confidence_stage(ctx: PipelineContext) -> PipelineContext:
     )
 
     ctx.weight_trend = None
-    if ctx.mfp_weight:
-        w_series = to_weight_series(ctx.mfp_weight)
+    if m.get("weight_series"):
+        w_series = m["weight_series"]
         wt = nutr_mod.compute_weight_trend(w_series)
         if wt is not None:
             ctx.weight_trend = wt.to_dict()
@@ -368,7 +366,7 @@ def serialization_stage(ctx: PipelineContext) -> PipelineContext:
             },
             "sleep_data": ("ok" if m["sleep_hours_today"] is not None else "missing"),
             "hevy_workouts_count": len(ctx.hevy_workouts),
-            "mfp_weight_points": len(ctx.mfp_weight),
+            "apple_weight_points": len(m.get("weight_series", [])),
         },
     )
     return ctx

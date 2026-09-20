@@ -84,7 +84,7 @@ class TestBuildExplanations:
         # ACWR 0.77 (niedociążenie) => kara 0, ratio NIE karze
         reasons = _acwr_penalty_reasons(
             acwr_penalty=0,
-            acwr={"zone": "niedociążenie", "ratio": 0.77},
+            acwr={"zone": "below_reference", "ratio": 0.77},
             rpe_coverage={"coverage_pct": 66.9},
             cardio_7d_sessions=0,
         )
@@ -97,7 +97,7 @@ class TestBuildExplanations:
         # kara +2 pochodzi z 3 mocnych sesji cardio w 7d, NIE z ratio
         reasons = _acwr_penalty_reasons(
             acwr_penalty=2,
-            acwr={"zone": "niedociążenie", "ratio": 0.77},
+            acwr={"zone": "below_reference", "ratio": 0.77},
             rpe_coverage={"coverage_pct": 66.9},
             cardio_7d_sessions=3,
         )

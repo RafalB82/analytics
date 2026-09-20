@@ -51,7 +51,7 @@ APPLE_CARDIO_TYPES: frozenset[str] = frozenset({
     "swimming", "open water swimming", "outdoor swimming",
     "hiking",
     "elliptical", "stair stepper", "stair climbing",
-    "dance", "mixed cardio", "other",
+    "dance", "mixed cardio",
     # bieżnia i ergometr wiosłowy zgłaszane pod różnymi nazwami
     "treadmill", "functional training",
 })

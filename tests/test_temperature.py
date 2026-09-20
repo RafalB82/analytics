@@ -94,7 +94,7 @@ class TestBuildTempOverrideMessage:
         alert = temp_deviation_alert(current=36.5, baseline=36.0, threshold_c=0.3, hrv_dropped=True)
         msg = build_temp_override_message(alert, spo2_confirmed=False)
         assert msg is not None
-        assert "czerwoną" in msg
+        assert "silny sygnał" in msg
 
     def test_message_when_elevated_observational(self):
         alert = temp_deviation_alert(current=36.35, baseline=36.0, threshold_c=0.3)

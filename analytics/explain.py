@@ -58,7 +58,7 @@ def _acwr_penalty_reasons(
     MOCNYCH sesji w tygodniu (`cardio_7d_sessions` / ogólny load), nie z ratio.
 
     Ta funkcja jawnie rozbija, ile punktów daje każda składowa:
-      - ratio siłowe: niedociążenie => 0 (nie karze), wysokie ryzyko => 2 itd.
+      - ratio siłowe: below_reference => 0, high_ratio => 2 itd.
       - cardio 7d: liczba mocnych sesji w tygodniu (przykład: 2 => +1, 3+ => +2).
     Dzięki temu eksplanacja jest trafna niezależnie od tego, czy kara faktycznie
     wystąpiła — a gdy wystąpiła, widać dokładnie skąd.
@@ -69,16 +69,16 @@ def _acwr_penalty_reasons(
 
     # 1) ratio siłowe — co daje (a czego NIE daje) samo ratio
     if ratio is not None:
-        if zone == "niedociążenie":
+        if zone == "below_reference":
             reasons.append(
-                f"ACWR siła: ratio {ratio:.2f} (niedociążenie) — NIE karze gotowości "
+                f"ACWR siła: ratio {ratio:.2f} (below_reference) — NIE karze gotowości "
                 "(chronic > acute to argument przeciw przeciążeniu, nie za)"
             )
-        elif zone == "wysokie ryzyko":
-            reasons.append(f"ACWR siła: ratio {ratio:.2f} (wysokie ryzyko) — kara +2")
-        elif zone == "podwyższone ryzyko":
-            reasons.append(f"ACWR siła: ratio {ratio:.2f} (podwyższone ryzyko) — kara +1")
-        else:  # "optymalna" lub "niewystarczające dane"
+        elif zone == "high_ratio":
+            reasons.append(f"ACWR siła: ratio {ratio:.2f} (high_ratio) — kara +2")
+        elif zone == "above_reference":
+            reasons.append(f"ACWR siła: ratio {ratio:.2f} (above_reference) — kara +1")
+        else:  # reference lub insufficient data
             reasons.append(f"ACWR siła: ratio {ratio:.2f} (strefa {zone}) — kara 0")
 
     # 2) cardio 7d — realny sygnał obciążenia tygodnia (liczba mocnych sesji)

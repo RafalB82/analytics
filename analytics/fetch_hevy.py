@@ -4,7 +4,7 @@ fetch_hevy.py — warstwa pobierania danych treningowych z Hevy MCP.
 
 Hevy udostępnia ćwiczenia/serie/ciężary/RPE przez hevy__get-workouts (MCP).
 Ten moduł dostarcza funkcję `build_daily_load_series()` zwracającą listę
-SessionLoad (dzienne obciążenie sRPE-load) do modułu ACWR.
+    SessionLoad (dzienne rpe_weighted_tonnage) do modułu ACWR.
 
 WAŻNE: sam nie woła MCP — zakłada, że agent wstrzyknie treningi jako ciąg
 JSON (z hevy__get-workouts, strona po stronie). To trzyma warstwę
@@ -18,7 +18,10 @@ from datetime import date, datetime
 from typing import Any
 
 from .acwr import SessionLoad, compute_session_load
+from .exceptions import InvalidMetricError
 from .logging import get_logger
+from .validators import reps as validate_reps
+from .validators import rpe as validate_rpe
 
 logger = get_logger(__name__)
 
@@ -28,6 +31,16 @@ SKIP_SET_TYPES = {"warmup"}
 # bo nie mają klasycznego "reps", ale można je policzyć osobno przy
 # customMetric (patrz UWAGA na końcu).
 DISTANCE_BASED = False
+
+
+def _rpe_status(value: Any) -> tuple[str, float | None]:
+    """Zwraca status RPE bez ukrywania malformed danych."""
+    if value is None:
+        return "missing", None
+    try:
+        return "valid", validate_rpe(value)
+    except Exception:
+        return "invalid", None
 
 
 def _parse_date(iso: Any) -> date | None:
@@ -64,25 +77,28 @@ def _set_load(s: dict) -> float | None:
     # sanity-check: odrzucamy ewidentnie zepsute wartości (nie legalne pominięcie)
     try:
         weight_f = float(weight)
-        reps_f = int(reps)
-    except (TypeError, ValueError):
+        reps_f = validate_reps(reps)
+    except (TypeError, ValueError, InvalidMetricError):
+        return None
+    if reps_f is None:
         return None
     if weight_f <= 0 or reps_f <= 0:
         return None
     if weight_f > 1000 or reps_f > 1000:  # absurdalne — uszkodzone dane
         return None
-    rpe = s.get("rpe")
+    rpe_status, rpe_f = _rpe_status(s.get("rpe"))
+    if rpe_status == "valid" and rpe_f is None:
+        return None
     # compute_session_load(sets, reps, weight_kg, rpe); sets=1 (per seria)
-    try:
-        return compute_session_load(sets=1, reps=reps_f, weight_kg=weight_f, rpe=rpe)
-    except ValueError:
-        # Niepoprawne RPE nie może skażać ACWR; zachowaj tonaż bez RPE.
-        return compute_session_load(sets=1, reps=reps_f, weight_kg=weight_f)
+    return compute_session_load(
+        sets=1, reps=reps_f, weight_kg=weight_f,
+        rpe=rpe_f if rpe_status == "valid" else None,
+    )
 
 
 def workout_daily_load(workout: dict) -> tuple[date, float] | None:
     """
-    Suma sRPE-load całego treningu (wszystkie serie robocze), przypięta
+    Suma rpe_weighted_tonnage całego treningu (wszystkie serie robocze), przypięta
     do dnia startu treningu. Zwraca (day, total_load) lub None gdy brak
     jakichkolwiek liczonych serii.
     """
@@ -107,7 +123,7 @@ def workout_daily_load(workout: dict) -> tuple[date, float] | None:
 def compute_cardio_session_load(duration_minutes: float, rpe: float) -> float:
     """
     Obciążenie sesji cardio (np. MTB) w TEJ SAMEJ skali co siłownia.
-    sRPE-load = czas (min) * RPE — analogicznie do tonaż * RPE w
+    Legacy manual cardio load = czas (min) * RPE — analogicznie do tonaż * RPE w
     compute_session_load. Czas jest tu odpowiednikiem "tonażu" (objętości),
     RPE skaluje go do subiektywnego wysiłku.
 
@@ -196,6 +212,7 @@ def rpe_coverage(workouts: list[dict]) -> dict:
     """
     total = 0
     with_rpe = 0
+    invalid_rpe = 0
     for w in workouts:
         for ex in w.get("exercises", []):
             for s in ex.get("sets", []):
@@ -204,10 +221,19 @@ def rpe_coverage(workouts: list[dict]) -> dict:
                 if s.get("reps") is None or s.get("weight") in (None, 0):
                     continue
                 total += 1
-                if s.get("rpe") is not None:
+                status, _ = _rpe_status(s.get("rpe"))
+                if status == "valid":
                     with_rpe += 1
+                elif status == "invalid":
+                    invalid_rpe += 1
     coverage = round(with_rpe / total * 100, 1) if total else 0.0
-    return {"total_working": total, "with_rpe": with_rpe, "coverage_pct": coverage}
+    return {
+        "total_working": total,
+        "with_rpe": with_rpe,
+        "missing_rpe": total - with_rpe - invalid_rpe,
+        "invalid_rpe": invalid_rpe,
+        "coverage_pct": coverage,
+    }
 
 
 def compute_volume_breakdown(workouts: list[dict]) -> dict:
@@ -218,7 +244,7 @@ def compute_volume_breakdown(workouts: list[dict]) -> dict:
     fizjologiczne). RPE-weighted volume (tonaż × RPE) normalizuje ciężar przez
     subiektywny wysiłek i jest znacznie bardziej „trenersko" istotne.
 
-    Liczy, bez zmiany scoringu (scoring nadal używa sRPE-load przez
+    Liczy, bez zmiany scoringu (scoring nadal używa rpe_weighted_tonnage przez
     `_set_load`/`compute_session_load`):
       - working_tonnage: suma tonażu serii ROBOCZYCH (non-warmup), bez RPE
       - rpe_weighted_volume: suma tonaż×RPE dla serii z RPE
@@ -233,6 +259,7 @@ def compute_volume_breakdown(workouts: list[dict]) -> dict:
     warmup_tonnage = 0.0
     working_sets = 0
     with_rpe = 0
+    invalid_rpe = 0
 
     for w in workouts:
         for ex in w.get("exercises", []):
@@ -243,8 +270,10 @@ def compute_volume_breakdown(workouts: list[dict]) -> dict:
                     continue
                 try:
                     wt_f = float(wt)
-                    reps_f = int(reps)
-                except (TypeError, ValueError):
+                    reps_f = validate_reps(reps)
+                except (TypeError, ValueError, InvalidMetricError):
+                    continue
+                if reps_f is None:
                     continue
                 if wt_f <= 0 or reps_f <= 0 or wt_f > 1000 or reps_f > 1000:
                     continue
@@ -254,17 +283,14 @@ def compute_volume_breakdown(workouts: list[dict]) -> dict:
                     continue
                 working_tonnage += tonnage
                 working_sets += 1
-                rpe = s.get("rpe")
-                if rpe is not None:
-                    # AUDYT fix: zły RPE (np. string) nie może wywalić całego
-                    # breakdownu — traktuj jak brak RPE (spójnie z _set_load).
-                    try:
-                        rpe_f = float(rpe)
-                    except (TypeError, ValueError):
-                        rpe_f = None
-                    if rpe_f is not None:
-                        rpe_weighted += tonnage * rpe_f
-                        with_rpe += 1
+                status, rpe_f = _rpe_status(s.get("rpe"))
+                if status == "valid":
+                    if rpe_f is None:
+                        continue
+                    rpe_weighted += tonnage * rpe_f
+                    with_rpe += 1
+                elif status == "invalid":
+                    invalid_rpe += 1
 
     coverage = round(with_rpe / working_sets * 100, 1) if working_sets else 0.0
     return {
@@ -272,6 +298,8 @@ def compute_volume_breakdown(workouts: list[dict]) -> dict:
         "rpe_weighted_volume": round(rpe_weighted, 0),
         "warmup_tonnage": round(warmup_tonnage, 0),
         "working_sets": working_sets,
+        "missing_rpe": working_sets - with_rpe - invalid_rpe,
+        "invalid_rpe": invalid_rpe,
         "rpe_coverage_pct": coverage,
         "rpe_weighted_reliable": coverage >= 80.0,  # próg pokrycia RPE
     }

@@ -12,6 +12,7 @@ from analytics.validators import (
     hrv,
     reps,
     rhr,
+    rpe,
     set_weight,
     sleep,
     temperature,
@@ -103,6 +104,24 @@ class TestSetWeightAndReps:
     def test_reps_negative_rejected(self):
         with pytest.raises(InvalidMetricError):
             reps(-3)
+
+    def test_fractional_reps_rejected(self):
+        with pytest.raises(InvalidMetricError):
+            reps(5.9)
+
+    def test_boolean_reps_rejected(self):
+        with pytest.raises(InvalidMetricError):
+            reps(True)
+
+    def test_integer_float_reps_allowed(self):
+        assert reps(5.0) == 5
+
+    def test_rpe_range(self):
+        assert rpe("8") == 8.0
+        with pytest.raises(InvalidMetricError):
+            rpe("abc")
+        with pytest.raises(InvalidMetricError):
+            rpe(11)
 
 
 class TestEnsureSortedAscending:

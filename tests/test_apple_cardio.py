@@ -268,7 +268,7 @@ class TestBuildCardioAcwr:
         res = build_cardio_acwr(series)
         # próbka wystarczająca -> klasyczne strefy ryzyka (nie "niewystarczające dane")
         assert res.zone != settings.ACWR.zone_insufficient
-        assert res.zone in ("niedociążenie", "optymalna", "podwyższone ryzyko", "wysokie ryzyko")
+        assert res.zone in ("below_reference", "reference", "above_reference", "high_ratio")
 
     def test_build_series_ignores_strength(self):
         today = date(2026, 8, 7)

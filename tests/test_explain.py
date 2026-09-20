@@ -81,7 +81,7 @@ class TestBuildExplanations:
         assert ex["acwr_penalty"]
 
     def test_underload_does_not_penalize(self):
-        # ACWR 0.77 (niedociążenie) => kara 0, ratio NIE karze
+        # ACWR 0.77 (low) => kara 0, ratio NIE karze
         reasons = _acwr_penalty_reasons(
             acwr_penalty=0,
             acwr={"zone": "low", "ratio": 0.77},

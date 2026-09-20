@@ -48,10 +48,10 @@ class GapInfo:
     """Wykryta luka treningowa (detraining) — kończąca się w dniu target.
 
     Niezależna od ACWR ratio: ratio po powrocie z przerwy typowo pokazuje
-    "niedociążenie" (acute niskie, bo mało dni treningowych w oknie 7d),
-    co jest matematycznie poprawne, ale fizjologicznie mylące — pierwszy
-    trening po dłuższej przerwie to często NAJWYŻSZE ryzyko (utrata
-    tolerancji tkanki na obciążenie), nie najniższe. Acute:chronic ratio
+    "low" (acute niskie, bo mało dni treningowych w oknie 7d),
+    co jest matematycznie poprawne, ale fizjologicznie niepełne — pierwszy
+    trening po dłuższej przerwie wymaga dodatkowego kontekstu tolerancji
+    tkanki na obciążenie. Acute:chronic ratio
     tego efektu nie modeluje (Gabbett 2016; krytyka: Impellizzeri i wsp.
     2020) — stąd osobna flaga zamiast liczenia na to, że ratio go złapie.
     """
@@ -198,8 +198,8 @@ def build_gap_override_message(gap: GapInfo) -> str | None:
     if gap.severity == "długa":
         return (
             f"UWAGA: pierwszy trening po {gap.gap_days} dniach przerwy. "
-            f"ACWR ratio może pokazywać „niedociążenie\" (mało dni w oknie 7d) — "
-            f"to nie znaczy bezpiecznie. Tolerancja tkanki na obciążenie spadła; "
+            f"ACWR ratio może pokazywać „low\" (mało dni w oknie 7d). "
+            f"Po przerwie tolerancja tkanki na obciążenie może być niższa; "
             f"rozważ redukcję objętości/intensywności niezależnie od strefy ACWR."
         )
     return (
@@ -385,7 +385,7 @@ def build_acwr(
     (maksimum stref) gdziekolwiek jest konsumowane.
 
     cardio_sessions: legacy, ręczne {"startTime", "duration_minutes", "rpe"}
-    — sumowane do dziennego loadu siłowego (zachowane dla kompatybilności).
+    — oddzielny fallback cardio, nigdy nie dodawany do strength ACWR.
     apple_workouts: list workoutów z Apple Watch (jak apple__list_recent_workouts)
     — filtrowane do cardio (ignorowane siłowe/kalisteniczne) i liczone TRIMP.
 
@@ -398,7 +398,7 @@ def build_acwr(
     start = target - timedelta(days=ACWR_LOOKBACK_DAYS)
 
     # --- SIŁA (Hevy) ---
-    daily_loads = build_daily_load_series(hevy_workouts, start, target, cardio_sessions=cardio_sessions)
+    daily_loads = build_daily_load_series(hevy_workouts, start, target)
     acute = compute_acute_load(daily_loads, window=settings.ACWR.acute_window)
     chronic = compute_chronic_load(daily_loads, window=settings.ACWR.chronic_window,
                                    use_ewma=settings.ACWR.chronic_use_ewma)
@@ -449,6 +449,30 @@ def build_acwr(
             "cardio_7d_days": cardio_7d_days,             # dni z jakimkolwiek cardio w 7d
             "cardio_7d_sessions": cardio_7d_sessions,     # MOCNE sesje (TRIMP>=próg) w 7d
             "strong_sessions": strong_sessions,           # list mocnych sesji + dzień tygodnia
+        }
+    elif cardio_sessions:
+        # Legacy manual cardio remains a separate fallback. Its min*RPE units
+        # are never mixed with strength rpe_weighted_tonnage.
+        from .fetch_hevy import cardio_session_daily_load
+
+        legacy_pairs = [
+            pair
+            for session in cardio_sessions
+            if (pair := cardio_session_daily_load(session)) is not None
+            and start <= pair[0] <= target
+        ]
+        legacy_series = fill_missing_days(aggregate_daily_loads(legacy_pairs), start, target)
+        cardio_res = acwr_ratio(
+            compute_acute_load(legacy_series),
+            compute_chronic_load(legacy_series, use_ewma=settings.ACWR.chronic_use_ewma),
+        )
+        cardio_detail = {
+            "source": "legacy_manual_fallback",
+            "unit": "min*rpe",
+            "acute": cardio_res.acute_load,
+            "chronic": cardio_res.chronic_load,
+            "ratio": cardio_res.ratio,
+            "zone": cardio_res.zone,
         }
 
     # luka łączona: bierz tor, który faktycznie wykrył przerwę i akurat dziś

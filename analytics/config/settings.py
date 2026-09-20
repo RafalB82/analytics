@@ -181,7 +181,8 @@ class EnergyBalanceSettings:
 
     TDEE (wydatek) liczony z aktywności Apple; zjedzone kcal z MFP. Kumulujący
     się niedobór (zjedzone < wydatek) przez kilka dni upośledza regenerację
-    i zwiększa ryzyko kontuzji/urazu/infekcji — to celowe powiązanie.
+    i pogarsza regenerację — to celowe powiązanie interpretacyjne, a nie
+    bezpośrednia diagnoza ryzyka urazu lub infekcji.
     """
 
     #: okno oceny bilansu (dni wstecz od targetu)

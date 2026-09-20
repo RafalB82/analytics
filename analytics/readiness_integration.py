@@ -337,7 +337,7 @@ def compute_full_readiness(
     temperature_message = build_temperature_alert_message(temp_alert, spo2_confirmed)
 
     # luka treningowa — OSTRZEŻENIE, nie modyfikator punktowy ani hard
-    # override strefy. ACWR ratio po przerwie zwykle pokazuje "niedociążenie"
+    # override strefy. ACWR ratio po przerwie zwykle pokazuje strefę "low"
     # (matematycznie poprawne, fizjologicznie mylące — patrz GapInfo docstring),
     # więc nie chcemy podnosić total_score na podstawie samej luki (brak
     # podstaw ilościowych na konkretną liczbę punktów karnych). Zamiast tego:

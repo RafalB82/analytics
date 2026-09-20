@@ -148,7 +148,7 @@ ale to temat na osobną decyzję — obecne podejście adapterowe jest bezpieczn
   (bez mnożenia przez RPE), więc starsze treningi mają **zaniżony load**
   względem nowszych (z RPE).
 - `rpe_coverage = 66.9%` — zgodnie z notatką w MEMORY, przy <70% ACWR
-  siłowy traktuj ze sceptycyzmem. Ratio 0.91 i tak w optymalnej strefie,
+  siłowy traktuj ze sceptycyzmem. Ratio 0.91 i tak w strefie reference,
   ale chronic może być lekko zaniżony.
 
 ### 3.3 Energia Apple w kJ, pole nazwane kcal (znany bug, potwierdzony)
@@ -434,8 +434,8 @@ Wszystkie 236 testów rdzenia przechodzi (245 z energy_balance — patrz 7.8).
 
 `analytics/energy_balance.py` — domyka lukę, o którą pytano: rdzeń liczył TDEE
 (wydatek) i cel kcal, ale NIE oceniał czy wydatek jest pokryty zjedzonymi kcal.
-Kumulujący się niedobór upośledza regenerację i zwiększa ryzyko kontuzji/
-urazu/infekcji — teraz to JAWNY sygnał, nie domyślanie w głowie agenta.
+Kumulujący się niedobór może pogarszać regenerację i odporność — teraz to
+JAWNY sygnał, a nie bezpośrednia diagnoza ryzyka urazu lub infekcji.
 
 **Wejście:** `mfp_daily_kcal` = lista `{day, kcal}` (zjedzone z MFP diary),
 + `target_kcal` z nutrition (TDEE 7d). **Wyjście** (sekcja `energy_balance`

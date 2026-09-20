@@ -35,7 +35,7 @@ class TestComputeSessionLoad:
     def test_tonnage_only_without_rpe(self):
         assert compute_session_load(sets=3, reps=5, weight_kg=100.0) == 1500.0
 
-    def test_srpe_load_multiplies_by_rpe(self):
+    def test_rpe_weighted_tonnage_multiplies_by_rpe(self):
         assert compute_session_load(sets=3, reps=5, weight_kg=100.0, rpe=8) == 12000.0
 
     def test_rpe_zero_returns_zero(self):
@@ -162,7 +162,7 @@ class TestAcwrRatio:
         res = acwr_ratio(acute=140, chronic=100)
         assert res.zone == "elevated"
 
-    def test_high_risk_zone(self):
+    def test_high_zone(self):
         res = acwr_ratio(acute=160, chronic=100)
         assert res.zone == "high"
 
@@ -171,9 +171,23 @@ class TestAcwrRatio:
         assert res.ratio == 0.0
         assert res.zone == "low"
 
+    @pytest.mark.parametrize(
+        ("ratio", "zone"),
+        [
+            (0.79, "low"),
+            (0.80, "reference"),
+            (1.30, "reference"),
+            (1.31, "elevated"),
+            (1.50, "elevated"),
+            (1.51, "high"),
+        ],
+    )
+    def test_zone_boundaries(self, ratio, zone):
+        assert acwr_ratio(ratio, 1.0).zone == zone
+
 
 class TestReadinessModifier:
-    def test_high_risk_adds_2(self):
+    def test_high_adds_2(self):
         res = acwr_ratio(acute=160, chronic=100)
         assert acwr_readiness_modifier(res) == 2
 
@@ -215,39 +229,25 @@ class TestCardioSessionLoad:
     def test_cardio_session_missing_fields_returns_none(self):
         assert cardio_session_daily_load({"startTime": "2026-08-06T08:00:00"}) is None
 
-    def test_cardio_merged_into_daily_load_series(self):
-        """Sesja cardio sumuje się z tonażem Hevy tego samego dnia (audyt #3)."""
+    def test_cardio_is_not_merged_into_strength_daily_load_series(self):
+        """Legacy cardio nie wpływa na strength rpe_weighted_tonnage."""
         today = date(2026, 8, 7)
         start = today - timedelta(days=14)
         hevy = [
             {"startTime": str(today - timedelta(days=1)) + "T18:00:00",
              "exercises": [{"sets": [{"type": "normal", "reps": 5, "weight": 100.0, "rpe": 8}]}]},
         ]
-        cardio = [
-            {"startTime": str(today - timedelta(days=1)) + "T08:00:00",
-             "duration_minutes": 90, "rpe": 6},
-            # poza oknem — pomijana
-            {"startTime": str(today - timedelta(days=40)) + "T08:00:00",
-             "duration_minutes": 120, "rpe": 7},
-        ]
-        series = build_daily_load_series(hevy, start, today, cardio_sessions=cardio)
+        series = build_daily_load_series(hevy, start, today)
         by_day = {s.day: s.load for s in series}
-        # tonaż 5*100*8=4000 + cardio 90*6=540 -> 4540 tego dnia
-        assert by_day[today - timedelta(days=1)] == pytest.approx(4000 + 540, abs=0.1)
-        # sesja cardio poza oknem nie weszła do serii (poza start..end)
-        assert (today - timedelta(days=40)) not in by_day
+        assert by_day[today - timedelta(days=1)] == pytest.approx(4000, abs=0.1)
 
-    def test_cardio_only_day(self):
-        """Dzień bez siłowni, tylko MTB — load z samego cardio."""
+    def test_cardio_only_day_is_zero_in_strength_series(self):
+        """Dzień tylko z legacy cardio pozostaje zerem dla strength ACWR."""
         today = date(2026, 8, 7)
         start = today - timedelta(days=14)
-        cardio = [
-            {"startTime": str(today - timedelta(days=2)) + "T08:00:00",
-             "duration_minutes": 60, "rpe": 5},
-        ]
-        series = build_daily_load_series([], start, today, cardio_sessions=cardio)
+        series = build_daily_load_series([], start, today)
         by_day = {s.day: s.load for s in series}
-        assert by_day[today - timedelta(days=2)] == 300.0
+        assert by_day[today - timedelta(days=2)] == 0.0
 
 
 def _hevy_workout(day: date, load_series: list[tuple[float, int, float]]) -> dict:
@@ -269,6 +269,23 @@ def _hevy_load(day: date, weight: float = 100.0) -> dict:
 
 
 class TestBuildAcwr:
+    def test_legacy_cardio_does_not_change_strength_acwr(self):
+        target = date(2026, 8, 7)
+        workouts = [_hevy_load(target - timedelta(days=i), weight=100.0) for i in range(14)]
+        cardio = [{
+            "startTime": (target - timedelta(days=1)).isoformat() + "T08:00:00",
+            "duration_minutes": 90,
+            "rpe": 6,
+        }]
+
+        without_cardio = build_acwr(workouts, target)
+        with_legacy_cardio = build_acwr(workouts, target, cardio_sessions=cardio)
+
+        assert with_legacy_cardio["acute"] == without_cardio["acute"]
+        assert with_legacy_cardio["chronic"] == without_cardio["chronic"]
+        assert with_legacy_cardio["result"] == without_cardio["result"]
+        assert with_legacy_cardio["cardio_detail"]["source"] == "legacy_manual_fallback"
+
     def test_returns_full_structure(self):
         """build_acwr zwraca dict z result/acute/chronic/rpe_coverage/daily_loads/gap."""
         target = date(2026, 8, 7)
@@ -292,7 +309,7 @@ class TestBuildAcwr:
         assert out["result"].zone in ("elevated", "high")
 
     def test_empty_workouts_underload(self):
-        """Brak treningów -> niedociążenie, ratio 0."""
+        """Brak treningów -> strefa low, ratio 0."""
         out = build_acwr([], date(2026, 8, 7))
         assert out["result"].zone == "low"
         assert out["result"].ratio == 0.0

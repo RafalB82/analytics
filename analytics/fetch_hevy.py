@@ -120,16 +120,15 @@ def workout_daily_load(workout: dict) -> tuple[date, float] | None:
 
 def compute_cardio_session_load(duration_minutes: float, rpe: float) -> float:
     """
-    Obciążenie sesji cardio (np. MTB) w TEJ SAMEJ skali co siłownia.
-    Legacy manual cardio load = czas (min) * RPE — analogicznie do tonaż * RPE w
-    compute_session_load. Czas jest tu odpowiednikiem "tonażu" (objętości),
-    RPE skaluje go do subiektywnego wysiłku.
+    Legacy manual cardio fallback = czas (min) * RPE.
+
+    Wynik ma własne jednostki min*RPE i nie może być dodawany do
+    rpe_weighted_tonnage ani strength ACWR. Apple cardio używa TRIMP.
 
     duration_minutes: czas trwania sesji w minutach (np. 90 dla 1.5h MTB).
     rpe: subiektywny wysiłek 1-10 (np. 6 = umiarkowanie ciężko).
 
-    Zwraca load w jednostkach "min·RPE", sumowalny per dzień razem
-    z tonażem z Hevy (oba to objętość-ważona-wysiłkiem).
+    Zwraca load w jednostkach "min·RPE" dla oddzielnego legacy cardio fallbacku.
     """
     if duration_minutes <= 0:
         raise ValueError("duration_minutes musi być > 0")
@@ -167,16 +166,13 @@ def build_daily_load_series(
     workouts: list[dict],
     start: date,
     end: date,
-    cardio_sessions: list[dict] | None = None,
 ) -> list[SessionLoad]:
     """
     Buduje pełny szereg dzienny (start..end włącznie, dni bez treningu = 0.0)
-    z listy treningów Hevy (każdy dict jak z hevy__get-workouts) ORAZ
-    opcjonalnych sesji cardio (np. MTB).
+    wyłącznie z listy treningów Hevy (każdy dict jak z hevy__get-workouts).
 
-    cardio_sessions: lista dictów {"startTime", "duration_minutes", "rpe"} —
-    obciążenie cardio (min·RPE) sumuje się per dzień razem z tonażem z Hevy,
-    więc wieczór siłowy + poranna jazda MTB obciążają ACWR łącznie.
+    Cardio jest celowo wyłączone z tego szeregu. Apple cardio liczy się jako
+    TRIMP w osobnym torze, a legacy cardio jako oddzielny fallback.
 
     workouts: wszystkie treningi (można ciągnąć stronami i skleić).
     start/end: okno dla rolling window ACWR (np. end=today, start=today-28d).
@@ -187,12 +183,6 @@ def build_daily_load_series(
     pairs = []
     for w in workouts:
         r = workout_daily_load(w)
-        if r is not None and start <= r[0] <= end:
-            pairs.append(r)
-
-    # dołóż sesje cardio (MTB) do tego samego dziennego obciążenia
-    for c in (cardio_sessions or []):
-        r = cardio_session_daily_load(c)
         if r is not None and start <= r[0] <= end:
             pairs.append(r)
 

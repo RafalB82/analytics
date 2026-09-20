@@ -6,8 +6,8 @@ DLACZEGO ISTNIEJE (luka, którą domyka):
   - `nutrition_adaptive` liczy TDEE (wydatek) i cel kaloryczny, ale NIE ocenia
     czy wydatek jest realnie pokryty zjedzonymi kcal.
   - Kumulujący się niedobór (zjedzone < wydatek) przez kilka dni upośledza
-    regenerację, obniża odporność i zwiększa ryzyko kontuzji/urazu/infekcji —
-    to celowe powiązanie, które wymaga JAWNEGO sygnału, nie domyślania w głowie
+    regenerację i odporność — to celowe powiązanie interpretacyjne, które
+    wymaga JAWNEGO sygnału, nie domyślania w głowie
     agenta.
 
 FILOZOFIA (zgodna z repozytorium):

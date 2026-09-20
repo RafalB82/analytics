@@ -1,4 +1,4 @@
-"""Testy modułu temperatury nadgarstka (override, alerty, komunikaty)."""
+"""Testy modułu temperatury nadgarstka (sygnał recovery, alerty, komunikaty)."""
 from __future__ import annotations
 
 from datetime import date, timedelta

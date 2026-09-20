@@ -53,7 +53,7 @@ def _acwr_penalty_reasons(
 
     Problem, który to rozwiązuje: `_acwr_reasons` pokazuje tylko strefę i ratio,
     przez co LLM/czytelnik mylnie przypisuje karę do ACWR ratio (np. „kara +2 za
-    ACWR 0.77 niedociążenie") — podczas gdy niedociążenie (ratio < 0.8) w ogóle
+    ACWR 0.77 w strefie low") — podczas gdy strefa low (ratio < 0.8) w ogóle
     nie karze (`acwr_readiness_modifier` => 0). Realna kara pochodzi z liczby
     MOCNYCH sesji w tygodniu (`cardio_7d_sessions` / ogólny load), nie z ratio.
 
@@ -102,7 +102,7 @@ def _acwr_penalty_reasons(
     if acwr_penalty > 0:
         reasons.append(f"Łączna kara obciążenia: +{acwr_penalty}")
     else:
-        reasons.append("Łączna kara obciążenia: 0 (niedociążenie / brak wystarczających danych)")
+        reasons.append("Łączna kara obciążenia: 0 (strefa low / brak wystarczających danych)")
 
     return reasons
 

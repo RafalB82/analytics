@@ -1,7 +1,7 @@
 """
 temperature.py
 Nocna temperatura nadgarstka (Apple Watch Ultra 2) jako niezależny
-override w scoringu gotowości. Temperatura często reaguje na
+sygnał regeneracji w scoringu gotowości. Temperatura często reaguje na
 infekcję/przetrenowanie wcześniej niż HRV/RHR.
 
 HealthKit identifier: HKQuantityTypeIdentifierAppleSleepingWristTemperature
@@ -71,7 +71,7 @@ def temp_deviation_alert(
     hrv_dropped: bool = False,
 ) -> TempAlert:
     """
-    Silny sygnał regeneracji, nie twardy override verdictu.
+    Silny sygnał regeneracji, nie samodzielny werdykt.
     threshold_c=0.3 to konserwatywny próg startowy (Apple sam raportuje
     już wygładzone odchylenie) — obserwuj swoje dane przez 2-3 tyg. i
     skoryguj próg do swojej faktycznej wariancji.
@@ -160,7 +160,7 @@ def serialize_temp_output(alert, temp_series, target: date) -> dict:
 
 
 def build_temp_alert(temp_series, hrv_series, target: date) -> TempAlert:
-    """Buduje obiekt TempAlert z serii temperatury i HRV (override dla readiness)."""
+    """Buduje obiekt TempAlert z serii temperatury i HRV (sygnał recovery)."""
     if not temp_series:
         return TempAlert(
             triggered=False, deviation_c=0.0, baseline_c=0.0, severity="brak",
@@ -179,5 +179,5 @@ def build_temp_alert(temp_series, hrv_series, target: date) -> TempAlert:
 
     alert = temp_deviation_alert(current=current, baseline=bl, hrv_dropped=hrv_dropped)
     msg = build_temperature_alert_message(alert, spo2_confirmed=False)
-    logger.debug("temp override: %s", msg if msg else "brak")
+    logger.debug("temp recovery signal: %s", msg if msg else "brak")
     return alert

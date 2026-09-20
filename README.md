@@ -303,8 +303,8 @@ Powodem jest różnica jednostek:
  siła   → rpe_weighted_tonnage (tonaż × RPE)
  cardio → TRIMP
 
-`rpe_weighted_tonnage` nie jest klasycznym session-RPE load. Jest własnym
-wskaźnikiem obciążenia siłowego: tonażem ważonym RPE. Cardio używa osobnej
+`rpe_weighted_tonnage` jest wskaźnikiem obciążenia siłowego: tonażem ważonym
+RPE (`tonnage × RPE`). Nie jest klasycznym session-RPE load. Cardio używa osobnej
 jednostki TRIMP i osobnego ACWR.
 ```
 
@@ -483,13 +483,9 @@ deviation >= 0.3°C
 
 Przy większym odchyleniu lub jednoczesnym spadku HRV alert może zostać sklasyfikowany jako `significant`.
 
-Znaczący alert temperatury może uruchomić twardy override:
-
-```text
-verdict = red
-```
-
-niezależnie od podstawowego score.
+Temperatura jest sygnałem osi `RECOVERY`. Może podnieść status regeneracji
+z `ok` do `degraded`, ale sama nie wymusza `verdict = red`. Czerwony werdykt
+wymaga odpowiedniej kombinacji obciążenia i pozostałych sygnałów regeneracji.
 
 Temperatura nie jest jednak diagnozą medyczną.
 
@@ -579,7 +575,8 @@ Zalecane jest ograniczenie objętości i kontrola intensywności.
 
 Wysoki load występuje razem z silnymi oznakami pogorszonej regeneracji.
 
-Możliwy jest również bezpośredni override przez znaczący sygnał temperatury.
+Znaczący sygnał temperatury jest dodatkowym kontekstem recovery, a nie
+bezpośrednim override werdyktu.
 
 ### Inconclusive
 

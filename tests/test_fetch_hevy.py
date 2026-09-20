@@ -153,6 +153,19 @@ class TestComputeVolumeBreakdown:
         assert b["rpe_coverage_pct"] == 0.0
         assert b["rpe_weighted_reliable"] is False
 
+    def test_bad_rpe_value_no_crash(self):
+        # AUDYT fix: nieprzekonwertowany RPE (np. string) -> jak brak RPE,
+        # bez ValueError (spójnie z _set_load, które zły RPE łapie)
+        w = _workout("2026-08-09T10:00:00Z", [
+            _set(100, 5, rpe="heavy"),
+            _set(80, 5, rpe=8),
+        ])
+        b = compute_volume_breakdown([w])
+        assert b["working_tonnage"] == 900
+        assert b["rpe_weighted_volume"] == 3200  # tylko seria z poprawnym RPE
+        assert b["working_sets"] == 2
+        assert b["rpe_coverage_pct"] == 50.0
+
     def test_bad_sets_skipped(self):
         # serie bez reps/ciężaru pomijane (odporne na uszkodzone dane)
         w = _workout("2026-08-09T10:00:00Z", [

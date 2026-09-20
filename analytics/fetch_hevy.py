@@ -256,8 +256,15 @@ def compute_volume_breakdown(workouts: list[dict]) -> dict:
                 working_sets += 1
                 rpe = s.get("rpe")
                 if rpe is not None:
-                    rpe_weighted += tonnage * float(rpe)
-                    with_rpe += 1
+                    # AUDYT fix: zły RPE (np. string) nie może wywalić całego
+                    # breakdownu — traktuj jak brak RPE (spójnie z _set_load).
+                    try:
+                        rpe_f = float(rpe)
+                    except (TypeError, ValueError):
+                        rpe_f = None
+                    if rpe_f is not None:
+                        rpe_weighted += tonnage * rpe_f
+                        with_rpe += 1
 
     coverage = round(with_rpe / working_sets * 100, 1) if working_sets else 0.0
     return {

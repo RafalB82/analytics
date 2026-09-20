@@ -125,6 +125,40 @@ class TestRunEndToEnd:
         result = run(_payload(source="garmin"))
         assert result["status"] == "error"
 
+    def test_malformed_apple_workout_date_dropped(self):
+        # AUDYT fix: malformowana data w apple_workouts -> sesja odrzucona
+        # w warstwie fetch (jak w fetch_hevy: brak sensownej daty = drop),
+        # analiza działa dalej na pozostałych danych, bez crasha
+        result = run(_payload(apple_workouts=[
+            {"name": "Outdoor Cycling", "start": "zla-data",
+             "duration_min": 60, "avg_heart_rate_bpm": 140},
+        ]))
+        assert result["status"] == "ok"
+
+    def test_value_error_caught_as_error(self, monkeypatch):
+        # AUDYT fix (safety-net): ValueError wymkający z pipeline'u -> status
+        # error, NIE nieobsłużony wyjątek (crash CLI/crona)
+        import analytics.pipeline as pipeline_mod
+
+        class _Boom:
+            @staticmethod
+            def run(ctx):
+                raise ValueError("niespodziewana wartość")
+
+        monkeypatch.setattr(pipeline_mod, "PIPELINE", _Boom())
+        result = run(_payload())
+        assert result["status"] == "error"
+        assert "value_error" in result["error"]
+
+    def test_missing_apple_workout_date_error_not_crash(self):
+        # AUDYT fix: sesja cardio bez daty -> odrzucona, nie ląduje na "dziś";
+        # analiza działa dalej na pozostałych danych
+        result = run(_payload(apple_workouts=[
+            {"name": "Outdoor Cycling",
+             "duration_min": 60, "avg_heart_rate_bpm": 140},
+        ]))
+        assert result["status"] == "ok"
+
     def test_temperature_present(self):
         p = _payload(apple_temp=[
             {"date": "2026-08-05", "value": 36.0},

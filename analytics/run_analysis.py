@@ -123,6 +123,12 @@ def run(payload: dict) -> dict[str, Any]:
     except ValidationError as e:
         logger.error("błąd walidacji modelu: %s", e)
         return {"status": "error", "error": f"validation_error: {e}"}
+    except ValueError as e:
+        # AUDYT fix: malformowane pola pojedynczego rekordu (np. zła data
+        # w apple_workouts) nie mogą przerywać analizy nieobsłużonym
+        # wyjątkiem — raportuj jako error zamiast crasha CLI.
+        logger.error("błąd wartości wejściowej: %s", e)
+        return {"status": "error", "error": f"value_error: {e}"}
 
 
 def main(argv: list[str] | None = None) -> int:

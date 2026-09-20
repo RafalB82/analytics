@@ -57,12 +57,21 @@ APPLE_CARDIO_TYPES: frozenset[str] = frozenset({
 })
 
 
-def _parse_date(iso: Any) -> date:
-    """ISO 8601 (z 'Z' lub offset) -> date."""
+def _parse_date(iso: Any) -> date | None:
+    """ISO 8601 (z 'Z' lub offset) -> date. None gdy brak/niezdatny format.
+
+    Spójnie z fetch_hevy._parse_date (AUDYT fix): brak daty = odrzuć sesję,
+    NIE przypisuj do dnia bieżącego (data.today() fałszowałoby acute_load
+    i cardio_7d w oknie 7d — pomiar mógł się wydarzyć w dowolnym dniu).
+    Niezdatny format -> None zamiast ValueError, żeby jedna malformowana
+    sesja nie wywalała całego pipeline'u (run() traktuje None jako brak)."""
     if not iso:
-        return date.today()
+        return None
     s = str(iso)[:10]
-    return datetime.strptime(s, "%Y-%m-%d").date()
+    try:
+        return datetime.strptime(s, "%Y-%m-%d").date()
+    except ValueError:
+        return None
 
 
 def _normalize_type(t: Any) -> str:
@@ -210,6 +219,10 @@ def apple_workout_daily_load(workout: dict) -> tuple[date, float] | None:
         return None
 
     day = _parse_date(workout.get("start") or workout.get("startTime"))
+    if day is None:
+        # brak/niezdatna data startu — odrzuć sesję (nie „dziś", nie zgaduj)
+        logger.debug("apple cardio: odrzucono sesję bez sensownej daty startu")
+        return None
     try:
         trimp = compute_trimp_session_load(
             avg_hr_f, duration_f, session_peak_hr=max_hr_f,

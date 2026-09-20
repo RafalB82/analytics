@@ -188,6 +188,36 @@ class TestAppleWorkoutDailyLoad:
         assert day == date(2026, 8, 6)
         assert 100 <= load <= 400  # ~88 min
 
+    def test_malformed_date_rejected(self):
+        # AUDYT fix: niezdatny format daty -> None (nie ValueError, nie today())
+        assert apple_workout_daily_load(
+            {"name": "Outdoor Cycling", "start": "nie-ma-date",
+             "duration_min": 60, "avg_heart_rate_bpm": 140}
+        ) is None
+
+    def test_missing_date_rejected(self):
+        # AUDYT fix: brak daty -> None, NIE date.today() (spójnie z fetch_hevy:
+        # sesja bez daty nie może lądować na bieżącym dniu i fałszować acute/7d)
+        assert apple_workout_daily_load(
+            {"name": "Outdoor Cycling",
+             "duration_min": 60, "avg_heart_rate_bpm": 140}
+        ) is None
+
+    def test_series_with_malformed_date_no_crash(self):
+        # AUDYT fix: jedna malformowana sesja nie wywala całego szeregu
+        start = date(2026, 8, 1)
+        end = date(2026, 8, 7)
+        ws = [
+            {"name": "Outdoor Cycling", "start": "zla-data",
+             "duration_min": 60, "avg_heart_rate_bpm": 140},
+            {"name": "Outdoor Cycling", "start": "2026-08-05T17:00:00",
+             "duration_min": 60, "avg_heart_rate_bpm": 140},
+        ]
+        series = build_apple_cardio_series(ws, start, end)
+        good = [s for s in series if s.load > 0]
+        assert len(good) == 1
+        assert good[0].day == date(2026, 8, 5)
+
 
 class TestCardio7dPenalty:
     """Kara gotowości z liczby mocnych sesji cardio w ostatnich 7d."""

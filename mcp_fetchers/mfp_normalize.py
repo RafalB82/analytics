@@ -109,13 +109,15 @@ def normalize_diaries(raw: dict | list) -> list[dict]:
     if isinstance(raw, dict):
         # pojedynczy dziennik MFP: {"date", "daily_totals", ...}
         if "daily_totals" in raw or "date" in raw:
-            out = extract_day_kcal(raw)
-            return [out] if out else []
+            single = extract_day_kcal(raw)
+            return [single] if single else []
         # może być obiekt {date: {daily_totals...}}? — nie, trzymamy prosty schemat
         return []
     if isinstance(raw, list):
-        out = []
+        out: list[dict] = []
         for d in raw:
+            if not isinstance(d, dict):
+                continue  # element listy niebędący dziennikiem nie może wywalać całej normalizacji
             r = extract_day_kcal(d)
             if r:
                 out.append(r)

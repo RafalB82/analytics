@@ -39,14 +39,26 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM"]
 ignore = ["E501"]  # line-length egzekwowany przez formattera
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.10"
 strict = false
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
-exclude = ["tests/", "mcp_fetchers/"]
+exclude = ["tests/"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
 pythonpath = ["."]
+
+[tool.coverage.run]
+source = ["analytics", "mcp_fetchers"]
+# demo_full to skrypt demonstracyjny, a fetch_mcp.py w części transportowej
+# (McpStdioClient, main/cron) wymaga żywych serwerów MCP — logika czysta jest testowana.
+omit = ["analytics/demo_full.py"]
+
+[tool.coverage.report]
+# egzekwowane przy każdym `pytest --cov` (lokalnie i w CI), nie tylko w workflow
+fail_under = 80
+show_missing = true
+skip_covered = true

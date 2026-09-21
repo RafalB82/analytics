@@ -66,7 +66,7 @@ def normalize_daily_point(d: dict) -> dict:
     """Jeden punkt dzienny z get_daily_activity_range -> podzbiór dla analytics."""
     sleep = d.get("sleep") or {}
     return {
-        "date": (d.get("date") or "")[:10],
+        "date": str(d.get("date") or "")[:10],
         "resting_heart_rate": d.get("resting_heart_rate"),
         "heart_rate_variability": d.get("heart_rate_variability"),
         "sleep": {"total_hours": sleep.get("total_hours")},
@@ -87,7 +87,7 @@ def normalize_temp_point(p: dict) -> dict | None:
         return None
     if not math.isfinite(value):
         return None
-    return {"date": (p["date"])[:10], "value": value}
+    return {"date": str(p["date"])[:10], "value": value}
 
 
 def is_cardio(workout: dict) -> bool:

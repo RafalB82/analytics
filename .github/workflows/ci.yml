@@ -15,7 +15,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install ruff
-      - run: ruff check analytics tests
+      - run: ruff check analytics mcp_fetchers tests
 
   typecheck:
     name: mypy
@@ -26,7 +26,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
-      - run: mypy analytics
+      - run: mypy analytics mcp_fetchers
 
   test:
     name: pytest + coverage
@@ -40,4 +40,4 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[dev]"
-      - run: pytest --cov=analytics --cov-report=term-missing --cov-fail-under=80
+      - run: pytest --cov   # źródła i próg (fail_under) w pyproject.toml

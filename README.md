@@ -1338,17 +1338,24 @@ python -m analytics.run_analysis '<json>'
 
 Projekt posiada testy jednostkowe i integracyjne dla głównych modułów.
 
-Uruchomienie:
+Instalacja narzędzi developerskich (pytest, pytest-cov, ruff, mypy):
 
 ```bash
-pytest
+pip install -e ".[dev]"
+```
+
+Uruchomienie (z pomiarem pokrycia; próg `fail_under` jest w `pyproject.toml`
+i obowiązuje lokalnie tak samo jak w CI):
+
+```bash
+pytest --cov
 ```
 
 Kontrola jakości:
 
 ```bash
 ruff check .
-mypy analytics
+mypy analytics mcp_fetchers
 ```
 
 ---

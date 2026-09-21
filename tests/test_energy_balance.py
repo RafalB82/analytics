@@ -112,3 +112,46 @@ class TestClassifyDeficitRisk:
         assert classify_deficit_risk(-100) == "niski"            # mały / nadwyżka
         assert classify_deficit_risk(-(lo + 500)) == "średni"    # wyraźny deficyt
         assert classify_deficit_risk(-(hi + 1000)) == "wysoki"   # duży deficyt
+
+
+class TestMalformedDays:
+    """Wpis MFP z niepoprawną datą nie może wywalać bilansu (obie ścieżki okna)."""
+
+    def _base(self):
+        return [_eaten(i, 2500) for i in range(9)]
+
+    def test_garbage_day_without_target_is_skipped(self):
+        eaten = self._base() + [{"day": "garbage", "kcal": 2000.0}]
+        res = compute_energy_balance(eaten, expenditure_kcal=2600)
+        assert res.status == "ok"
+        assert all(d["day"] != "garbage" for d in res.daily)
+
+    def test_garbage_day_with_target_is_skipped(self):
+        eaten = self._base() + [{"day": None, "kcal": 2000.0}]
+        res = compute_energy_balance(eaten, expenditure_kcal=2600, target=date(2026, 8, 9))
+        assert res.status == "ok"
+        assert res.n_valid_days == 7
+
+    def test_all_days_malformed_is_insufficient(self):
+        eaten = [{"day": "x", "kcal": 2500.0}, {"day": "", "kcal": 2500.0}]
+        res = compute_energy_balance(eaten, expenditure_kcal=2600)
+        assert res.status != "ok"
+
+    def test_accepts_date_and_datetime_objects(self):
+        from datetime import datetime
+
+        eaten = [{"day": date(2026, 8, 9) - timedelta(days=i), "kcal": 2500.0} for i in range(6)]
+        eaten.append({"day": datetime(2026, 8, 3, 12, 0), "kcal": 2500.0})
+        res = compute_energy_balance(eaten, expenditure_kcal=2600, target=date(2026, 8, 9))
+        assert res.status == "ok"
+        assert res.n_valid_days == 7
+
+    def test_sparse_old_entries_do_not_pose_as_current_window(self):
+        # 3 wpisy sprzed ~miesiąca: bez filtra po dacie zostałyby uznane za okno
+        eaten = [_eaten(30 + i, 2500) for i in range(3)]
+        res = compute_energy_balance(eaten, expenditure_kcal=2600)
+        # okno liczone wstecz od ostatniego dnia z danymi -> wpisy są sobie "bieżące",
+        # ale z target=dziś żaden nie wpada w okno
+        res_t = compute_energy_balance(eaten, expenditure_kcal=2600, target=date(2026, 8, 9))
+        assert res_t.status != "ok"
+        assert res is not None

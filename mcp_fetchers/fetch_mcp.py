@@ -36,6 +36,7 @@ import sys
 import time
 import urllib.request
 from contextlib import suppress
+from typing import Any
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # analytics/
 sys.path.insert(0, BASE)
@@ -104,7 +105,7 @@ class McpHttpClient:
 
     def _parse_sse_or_json(self, body: str, payload: dict) -> dict:
         if body.lstrip().startswith("{"):
-            return json.loads(body)
+            return self._check(json.loads(body), payload)
         # SSE: wiele bloków "data: {...}"
         result = None
         for line in body.splitlines():
@@ -133,10 +134,12 @@ class McpHttpClient:
             self._call({"jsonrpc": "2.0", "method": "notifications/initialized"},
                        expect_body=False)
 
-    def call_tool(self, tool: str, arguments: dict) -> dict:
+    def call_tool(self, tool: str, arguments: dict) -> Any:
         msg = self._call({"jsonrpc": "2.0", "id": int(time.time() * 1000) % 100000,
                           "method": "tools/call",
                           "params": {"name": tool, "arguments": arguments}})
+        if msg is None:
+            raise JsonRpcError(f"pusta odpowiedź MCP dla {tool}")
         # wynik tools/call: {"result":{"content":[{type:"text",text:"..."}],...}}
         result = msg.get("result", {})
         text = ""
@@ -164,7 +167,7 @@ class McpStdioClient:
             stderr=subprocess.DEVNULL, env=env,
         )
 
-    def _send(self, method: str, params: dict, notify: bool = False) -> dict | None:
+    def _send(self, method: str, params: dict, notify: bool = False) -> Any:
         self._id += 1
         payload: dict = {"jsonrpc": "2.0", "method": method, "params": params}
         if not notify:
@@ -177,6 +180,7 @@ class McpStdioClient:
             return None
         # czytaj stdout aż do matching id
         deadline = time.time() + self._timeout
+        assert self._proc.stdout
         while time.time() < deadline:
             out = self._proc.stdout.readline()
             if not out:
@@ -198,7 +202,7 @@ class McpStdioClient:
                                   "clientInfo": {"name": "fetch_mcp", "version": "1"}})
         self._send("notifications/initialized", {}, notify=True)
 
-    def call_tool(self, tool: str, arguments: dict) -> dict:
+    def call_tool(self, tool: str, arguments: dict) -> Any:
         result = self._send("tools/call", {"name": tool, "arguments": arguments})
         text = ""
         for c in (result or {}).get("content", []):
@@ -234,14 +238,15 @@ def fetch_hevy(client, target: str,
 
     # 1) lista workoutów — standalone zwraca GOŁĄ LISTĘ 5/sztukę na stronę i
     #    akceptuje tylko {page}. Iterujemy aż strona wyjdzie poza okno ACWR.
-    all_summaries = []
+    all_summaries: list[dict] = []
     for page in range(1, 10):  # safety cap
         res = client.call_tool("get-workouts", {"page": page})
         workouts = res if isinstance(res, list) else res.get("workouts", [])
         if not workouts:
             break
         all_summaries.extend(workouts)
-        oldest = min((w.get("start_time") or "")[:10] for w in workouts if w.get("start_time"))
+        starts = [(w.get("start_time") or "")[:10] for w in workouts if w.get("start_time")]
+        oldest = min(starts) if starts else ""  # strona bez start_time nie może wywalać min()
         if oldest and oldest < window_start:
             break  # kolejne strony coraz starsze — wyjdź
 
@@ -280,7 +285,11 @@ def fetch_apple(client: McpHttpClient, target: str, lookback_days: int = ACWR_LO
     temp_points = temp.get("points", [])
     return {
         "daily": daily if isinstance(daily, list) else daily.get("result", []),
-        "temp": [{"date": p["date"], "value": p["value"]} for p in temp_points],
+        "temp": [
+            {"date": p["date"], "value": p["value"]}
+            for p in temp_points
+            if isinstance(p, dict) and p.get("date") is not None and p.get("value") is not None
+        ],
         "workouts": workouts if isinstance(workouts, list) else workouts.get("result", []),
     }
 
@@ -321,7 +330,7 @@ def fetch_mfp(client: McpHttpClient, target: str, days: int = 7) -> list:
     return diaries
 
 
-def write_stdin_json(data: dict, path: str) -> None:
+def write_stdin_json(data: dict | list, path: str) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
         json.dump(data, f, ensure_ascii=False)
@@ -369,7 +378,7 @@ def main() -> int:
     if not args.skip_hevy:
         # Domyślnie HTTP (hevy-mcp.service na 127.0.0.1:3000). Jeśli serwer nie
         # odpowiada (connection refused), wróć do stdio z izolowanym procesem.
-        h = None
+        h: McpHttpClient | McpStdioClient | None = None
         if HEVY_MCP_URL:
             try:
                 print(f"[fetch_mcp] łączę się z Hevy (HTTP {HEVY_MCP_URL})...", file=sys.stderr)

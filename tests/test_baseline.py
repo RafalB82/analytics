@@ -199,3 +199,34 @@ class TestBaselineByContext:
         res = baseline_by_context(series, current_is_training_day=True)
         assert res is not None
         assert res.baseline == 50.0
+
+
+class TestIsCurrent:
+    def test_fresh_today_and_yesterday(self):
+        from analytics.baseline import is_current
+
+        s = _series([1.0] * 3, end=date(2026, 8, 7))
+        assert is_current(s, date(2026, 8, 7))
+        assert is_current(s, date(2026, 8, 8))
+
+    def test_stale_future_and_empty(self):
+        from analytics.baseline import is_current
+
+        s = _series([1.0] * 3, end=date(2026, 8, 7))
+        assert not is_current(s, date(2026, 8, 12))   # za stary
+        assert not is_current(s, date(2026, 8, 5))    # punkt z przyszłości
+        assert not is_current([], date(2026, 8, 7))
+
+    def test_unsorted_series_uses_latest_day(self):
+        from analytics.baseline import is_current
+
+        s = _series([1.0] * 5, end=date(2026, 8, 7))
+        s.reverse()  # najnowszy punkt na początku
+        assert is_current(s, date(2026, 8, 7))
+
+    def test_custom_max_age(self):
+        from analytics.baseline import is_current
+
+        s = _series([1.0] * 3, end=date(2026, 8, 7))
+        assert is_current(s, date(2026, 8, 10), max_age_days=3)
+        assert not is_current(s, date(2026, 8, 11), max_age_days=3)

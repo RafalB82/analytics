@@ -218,7 +218,14 @@ def main() -> int:
                          ensure_ascii=False))
         return 1
 
-    out = [n for n in (normalize_workout(w) for w in workouts) if n is not None]
+    try:
+        out = [n for n in (normalize_workout(w) for w in workouts) if n is not None]
+    except InvalidMetricError as e:
+        # zepsuty rekord (np. reps <= 0) nie jest cicho pomijany (kontrakt walidatorów),
+        # ale CLI ma zwrócić czytelny błąd JSON zamiast tracebacku
+        print(json.dumps({"status": "error", "error": f"niepoprawne dane serii: {e}"},
+                         ensure_ascii=False))
+        return 1
     # sortuj chronologicznie po startTime (determinizm niezależny od kolejności
     # wejścia — fetch_hevy zakłada rosnący porządek dla rolling window)
     out.sort(key=lambda w: w.get("startTime") or "")

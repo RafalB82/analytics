@@ -32,12 +32,28 @@ WYJŚCIE (dict):
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from .config import settings
 from .logging import get_logger
 
 logger = get_logger(__name__)
+
+
+def _parse_day(value: object) -> date | None:
+    """Data dzienna z wpisu MFP (date | datetime | ISO string) albo None.
+
+    Jedno miejsce parsowania dla obu ścieżek okna (z `target` i bez) — wpis z
+    niepoprawną datą jest odrzucany, zamiast wywalać cały bilans ValueError.
+    """
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except (ValueError, TypeError):
+        return None
 
 
 @dataclass
@@ -99,27 +115,23 @@ def compute_energy_balance(
     if expenditure_kcal <= 0 or not eaten:
         return _insufficient(eaten, window)
 
-    # sortuj i weź ostatnie `window` dni z jedzeniem
-    eaten_sorted = sorted(eaten, key=lambda e: (e.get("day") or ""))
-    if not eaten_sorted:
+    # parsuj daty raz, odrzuć wpisy bez poprawnej daty, sortuj chronologicznie
+    dated: list[tuple[date, dict]] = []
+    for e in eaten:
+        d_e = _parse_day(e.get("day"))
+        if d_e is None:
+            logger.warning("energy_balance: pominięto wpis bez poprawnej daty: %r", e.get("day"))
+            continue
+        dated.append((d_e, e))
+    dated.sort(key=lambda pair: pair[0])
+    if not dated:
         return _insufficient(eaten, window)
-    ref = eaten_sorted[-1].get("day")
-    recent = eaten_sorted
-    if target is not None:
-        cutoff_t = target - timedelta(days=window - 1)
-        recent = []
-        for e in eaten_sorted:
-            try:
-                d_e = date.fromisoformat(str(e.get("day"))[:10])
-            except ValueError:
-                continue  # wpis bez poprawnej daty nie wchodzi do okna
-            if cutoff_t <= d_e <= target:
-                recent.append(e)
-    elif window < len(recent):
-        # okno wstecz od ostatniego dnia z danymi
-        ref_date = date.fromisoformat(str(ref)[:10])
-        cutoff = ref_date - timedelta(days=window - 1)
-        recent = [e for e in recent if date.fromisoformat(str(e["day"])[:10]) >= cutoff]
+
+    # okno kończy się NA target (gdy podany) albo na ostatnim dniu z danymi;
+    # zawsze filtrowane po dacie — stare wpisy nie mogą udawać bieżącego tygodnia
+    window_end = target if target is not None else dated[-1][0]
+    cutoff = window_end - timedelta(days=window - 1)
+    recent = [(d_e, e) for d_e, e in dated if cutoff <= d_e <= window_end]
 
     n_valid = 0
     n_incomplete = 0
@@ -135,7 +147,7 @@ def compute_energy_balance(
     # Dzień z mniej niż połową wydatku to niemal na pewno niepełny log (wyjazd/
     # weekend/problemy z notowaniem), nie celowy post — nie liczymy go do niedoboru.
     floor = expenditure_kcal * settings.ENERGY_BALANCE.incomplete_frac_of_expenditure
-    for e in recent:
+    for d_e, e in recent:
         kcal = e.get("kcal")
         if kcal is None:
             continue
@@ -148,11 +160,8 @@ def compute_energy_balance(
             cumulative += bal
             eaten_sum += kcal_f
             n_valid += 1
-        day_iso = str(e.get("day"))[:10]
-        try:
-            dow = _DOW[date.fromisoformat(day_iso).weekday()]
-        except (ValueError, TypeError):
-            dow = "?"
+        day_iso = d_e.isoformat()
+        dow = _DOW[d_e.weekday()]
         daily.append({
             "day": day_iso,
             "day_of_week": dow,

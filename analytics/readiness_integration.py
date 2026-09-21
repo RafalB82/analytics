@@ -9,7 +9,8 @@ go opisuje. Zero liczenia po stronie modelu.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import date
 
 from .acwr import (
     ACWRResult,
@@ -17,9 +18,15 @@ from .acwr import (
     acwr_readiness_modifier,
     build_gap_override_message,
 )
-from .baseline import MetricPoint, TrendResult, compute_ewma_baseline, compute_trend_slope
+from .baseline import (
+    MetricPoint,
+    TrendResult,
+    compute_ewma_baseline,
+    compute_trend_slope,
+    is_current,
+)
 from .config import settings
-from .exceptions import MissingBaselineError
+from .exceptions import InsufficientDataError, MissingBaselineError
 from .logging import get_logger
 from .temperature import TempAlert, build_temperature_alert_message
 
@@ -50,11 +57,11 @@ class ReadinessOutput:
     load: dict | None = None          # {status: low|moderate|high|very_high, components:[...]}
     data_quality: dict | None = None  # {status: high|medium|low, notes:[...]}
     verdict: dict | None = None       # {zone: green|orange|red|inconclusive, max_rpe, advice, rationale}
-
-
+    # sygnały ("hrv"/"rhr") z nieaktualnym ostatnim odczytem — pominięte w scoringu
+    stale_signals: list[str] = field(default_factory=list)
 def score_hrv_rhr_sleep(
-    hrv_deviation_pct: float,
-    rhr_deviation_bpm: float,
+    hrv_deviation_pct: float | None,
+    rhr_deviation_bpm: float | None,
     sleep_hours: float | None,
 ) -> int:
     """
@@ -67,17 +74,17 @@ def score_hrv_rhr_sleep(
     ocenę regeneracji zamiast po cichu liczyć jak dla pełnych danych.
     """
     score = 0
-
-    if hrv_deviation_pct <= settings.READINESS.hrv_penalty_high:
-        score += 2
-    elif hrv_deviation_pct <= settings.READINESS.hrv_penalty_low:
-        score += 1
-
-    if rhr_deviation_bpm >= settings.READINESS.rhr_penalty_high:
-        score += 2
-    elif rhr_deviation_bpm >= settings.READINESS.rhr_penalty_low:
-        score += 1
-
+    # None (nieaktualny/brakujący odczyt) = pominięcie składnika, jak przy śnie
+    if hrv_deviation_pct is not None:
+        if hrv_deviation_pct <= settings.READINESS.hrv_penalty_high:
+            score += 2
+        elif hrv_deviation_pct <= settings.READINESS.hrv_penalty_low:
+            score += 1
+    if rhr_deviation_bpm is not None:
+        if rhr_deviation_bpm >= settings.READINESS.rhr_penalty_high:
+            score += 2
+        elif rhr_deviation_bpm >= settings.READINESS.rhr_penalty_low:
+            score += 1
     if sleep_hours is not None:
         if sleep_hours < settings.READINESS.sleep_penalty_high_h:
             score += 2
@@ -196,6 +203,7 @@ def classify_data_quality(
     sleep_missing: bool,
     cardio_insufficient: bool,
     rpe_coverage_pct: float | None = None,
+    stale_signals: list[str] | None = None,
 ) -> dict:
     """Oś DATA_QUALITY: wiarygodność oceny.
 
@@ -206,6 +214,12 @@ def classify_data_quality(
     Status: high | medium | low.
     """
     notes: list[str] = []
+    if stale_signals:
+        names = "/".join(s.upper() for s in stale_signals)
+        notes.append(
+            f"Nieaktualny odczyt {names} (starszy niż "
+            f"{settings.BASELINE.max_current_age_days} d) — pominięty w scoringu"
+        )
     if sleep_missing:
         notes.append("Brak danych o śnie — ocena regeneracji niepełna")
     if cardio_insufficient:
@@ -222,38 +236,38 @@ def classify_data_quality(
     return {"status": status, "notes": notes}
 
 
-def build_verdict(recovery: dict, load: dict) -> dict:
-    """Werdykt: semantyka stref wg połączenia LOAD i RECOVERY (sedno review).
+_ZONE_RANK = {"green": 0, "orange": 1, "red": 2}
 
-    NADRZĘDNOŚĆ (faza 10.4): to pole jest rekomendowaną interpretacją strefy
-    dla warstwy LLM/prezentacji — NADRZĘDNE względem legacy `zone` (z sumy
-    total_score). Użyj `verdict.zone` (green/orange/red) do rekomendacji,
-    nie gołego `zone` (zielona/żółta/czerwona), bo legacy nie rozdziela
-    load od fatigue.
 
-    Kluczowa zmiana względem starego `classify_zone(total_score)`: sam wysoki
-    LOAD NIE wystarczy do czerwonej strefy. Czerwona wymaga jednocześnie
-    wysokiego obciążenia ORAZ silnych oznak pogorszenia regeneracji.
+def _matrix_verdict(recovery: dict, load: dict) -> dict:
+    """Macierz LOAD x RECOVERY (bez uwzględnienia legacy score).
 
-    - LOAD niski -> green (gotowy), niezależnie od recovery.
-    - LOAD wysoki + RECOVERY ok  -> green z notą „duże obciążenie, ale bez
-      oznak problemu" (to realizuje Twoją tabelkę: 🟢 duże obciążenie,
-      organizm nie pokazuje oznak problemu).
-    - LOAD wysoki + RECOVERY degraded -> orange (duże obciążenie + pojedyncze
-      oznaki pogorszenia).
-    - LOAD wysoki + RECOVERY critical -> red (duże obciążenie + silne oznaki).
+    - LOAD niski/umiarkowany + RECOVERY ok/degraded -> green.
+    - LOAD niski/umiarkowany + RECOVERY critical -> orange: silne oznaki
+      pogorszenia regeneracji (HRV/RHR/sen/temperatura) nie mogą dać zgody na
+      pełną objętość tylko dlatego, że obciążenie nie jest wysokie
+      (infekcja / przemęczenie z innych źródeł niż trening).
+    - LOAD wysoki + RECOVERY ok -> green z notą; degraded -> orange; critical -> red.
     """
     load_status = load["status"]
     rec_status = recovery["status"]
-
     if load_status in ("low", "moderate"):
+        if rec_status == "critical":
+            return {
+                "zone": "orange",
+                "max_rpe": "max RPE 8 wszędzie",
+                "advice": "ogranicz objętość o ~30%, RPE ≤ 8",
+                "rationale": (
+                    f"Silne oznaki pogorszenia regeneracji przy obciążeniu {load_status} — "
+                    "nie wymuszaj pełnej objętości."
+                ),
+            }
         return {
             "zone": "green",
             "max_rpe": "RPE 9 ostatnia seria / 8 reszta",
             "advice": "pełna objętość",
             "rationale": f"Obciążenie {load_status}, regeneracja {rec_status} — brak podstaw do ograniczeń.",
         }
-
     if rec_status == "ok":
         return {
             "zone": "green",
@@ -268,13 +282,35 @@ def build_verdict(recovery: dict, load: dict) -> dict:
             "advice": "ogranicz objętość o ~30%, RPE ≤ 8",
             "rationale": "Wysokie obciążenie + pojedyncze oznaki pogorszenia regeneracji (HRV/RHR/sen/temperatura).",
         }
-    # rec_status == critical
     return {
         "zone": "red",
         "max_rpe": "max RPE 7 lub regeneracja",
         "advice": "objętość -30-40%, RPE ≤ 7",
         "rationale": "Wysokie obciążenie + silne oznaki pogorszenia regeneracji.",
     }
+
+
+def build_verdict(recovery: dict, load: dict, legacy_zone: str | None = None) -> dict:
+    """Werdykt: semantyka stref wg połączenia LOAD i RECOVERY.
+
+    NADRZĘDNOŚĆ (faza 10.4): to pole jest rekomendowaną interpretacją strefy
+    dla warstwy LLM/prezentacji, ale NIE może być łagodniejsze niż twarde
+    minimum z legacy score: gdy `legacy_zone == "czerwona"` (łączny score >= 4),
+    werdykt jest podnoszony co najmniej do orange. Sama macierz LOAD x RECOVERY
+    (patrz `_matrix_verdict`) nadal decyduje o red (wysoki load + critical).
+    """
+    verdict = _matrix_verdict(recovery, load)
+    if legacy_zone == "czerwona" and _ZONE_RANK[verdict["zone"]] < _ZONE_RANK["orange"]:
+        verdict = {
+            "zone": "orange",
+            "max_rpe": "max RPE 8 wszędzie",
+            "advice": "ogranicz objętość o ~30%, RPE ≤ 8",
+            "rationale": (
+                verdict["rationale"]
+                + " Łączny score gotowości wskazuje strefę czerwoną — werdykt podniesiony do orange."
+            ),
+        }
+    return verdict
 
 
 def compute_full_readiness(
@@ -289,20 +325,37 @@ def compute_full_readiness(
     gap: GapInfo | None = None,
     rpe_coverage_pct: float | None = None,
     rhr_trend: TrendResult | None = None,
+    target: date | None = None,
 ) -> ReadinessOutput:
-
     hrv_baseline = compute_ewma_baseline(hrv_series)
     rhr_baseline = compute_ewma_baseline(rhr_series)
 
     if hrv_baseline is None or rhr_baseline is None:
         raise MissingBaselineError("Za mało danych historycznych na baseline (min. 6 dni)")
 
-    logger.info("readiness: HRV dev=%.1f%% RHR dev=%.1f bpm sen=%s",
-                hrv_baseline.deviation_pct, rhr_baseline.deviation_abs, sleep_hours_today)
-
+    # ŚWIEŻOŚĆ: gdy podano target, ostatni odczyt musi być bieżący. Nieaktualny
+    # sygnał jest pomijany w scoringu (jak brak snu) i flagowany; gdy oba są
+    # nieaktualne, nie ma dzisiejszego sygnału regeneracji -> fallback.
+    stale: list[str] = []
+    if target is not None:
+        if not is_current(hrv_series, target):
+            stale.append("hrv")
+        if not is_current(rhr_series, target):
+            stale.append("rhr")
+    if len(stale) == 2:
+        raise InsufficientDataError(
+            "stale_recovery_signals: ostatni odczyt HRV i RHR starszy niż "
+            f"{settings.BASELINE.max_current_age_days} d względem {target}"
+        )
+    hrv_dev = None if "hrv" in stale else hrv_baseline.deviation_pct
+    rhr_dev = None if "rhr" in stale else rhr_baseline.deviation_abs
+    if "rhr" in stale:
+        rhr_trend = None  # trend z nieaktualnych punktów nie jest sygnałem na dziś
+    logger.info("readiness: HRV dev=%s%% RHR dev=%s bpm sen=%s stale=%s",
+                hrv_dev, rhr_dev, sleep_hours_today, stale or "brak")
     base = score_hrv_rhr_sleep(
-        hrv_deviation_pct=hrv_baseline.deviation_pct,
-        rhr_deviation_bpm=rhr_baseline.deviation_abs,
+        hrv_deviation_pct=hrv_dev,
+        rhr_deviation_bpm=rhr_dev,
         sleep_hours=sleep_hours_today,
     )
 
@@ -328,7 +381,7 @@ def compute_full_readiness(
 
     # trend HRV jako dodatkowa informacja (nie zmienia wprost scoringu,
     # ale wpływa na notatkę tekstową dla LLM)
-    trend = compute_trend_slope(hrv_series)
+    trend = compute_trend_slope(hrv_series) if "hrv" not in stale else None
     trend_note = None
     if trend and trend.reliable and trend.direction == "spadający":
         trend_note = "HRV w trendzie spadkowym od kilku dni — obserwuj, niezależnie od dzisiejszego wyniku."
@@ -368,9 +421,9 @@ def compute_full_readiness(
         sleep_missing=sleep_hours_today is None,
         cardio_insufficient=cardio_insufficient,
         rpe_coverage_pct=rpe_coverage_pct,
+        stale_signals=stale,
     )
-
-    verdict = build_verdict(recovery, load)
+    verdict = build_verdict(recovery, load, legacy_zone=zone)
 
     return ReadinessOutput(
         base_score=base,
@@ -387,4 +440,5 @@ def compute_full_readiness(
         load=load,
         data_quality=data_quality,
         verdict=verdict,
+        stale_signals=stale,
     )

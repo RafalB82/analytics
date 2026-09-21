@@ -282,9 +282,10 @@ class TestAxesAndVerdict:
         assert out.recovery["status"] == "critical"
         assert out.verdict["zone"] == "red"
 
-    def test_low_load_green_even_if_recovery_degraded(self):
-        # niski load -> green, nawet gdy regeneracja pogorszona (brak bodźców =
-        # brak ostrych ograniczeń; to inny sygnał niż przeciążenie)
+    def test_low_load_critical_recovery_is_orange_not_green(self):
+        # ZMIANA (audyt): wcześniej niski/umiarkowany load dawał green nawet przy
+        # krytycznej regeneracji (HRV -34%, RHR +7.8, legacy score 4). Silne oznaki
+        # pogorszenia regeneracji nie mogą dawać zgody na pełną objętość.
         hrv_series = _series([45] * 6 + [30, 28])
         rhr_series = _series([55] * 6 + [62, 64])
         out = compute_full_readiness(
@@ -293,6 +294,19 @@ class TestAxesAndVerdict:
             temp_alert=_temp(), spo2_confirmed=False, cardio_7d_sessions=0,
         )
         assert out.load["status"] == "moderate"
+        assert out.recovery["status"] == "critical"
+        assert out.verdict["zone"] == "orange"
+
+    def test_low_load_degraded_recovery_stays_green(self):
+        # pojedyncze oznaki (degraded) + brak wysokiego loadu -> nadal green
+        hrv_series = _series([45] * 6 + [44, 40])
+        rhr_series = _series([55] * 8)
+        out = compute_full_readiness(
+            hrv_series=hrv_series, rhr_series=rhr_series, sleep_hours_today=6.0,
+            acwr_result=_acwr(zone="low", ratio=0.7),
+            temp_alert=_temp(), spo2_confirmed=False, cardio_7d_sessions=0,
+        )
+        assert out.recovery["status"] == "degraded"
         assert out.verdict["zone"] == "green"
 
     def test_temperature_signal_does_not_force_verdict_red(self):

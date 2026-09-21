@@ -38,8 +38,9 @@ class BaselineSettings:
     #: alphy dla detekcji przesunięcia (krótkie ~7d, długie ~28d)
     shift_alpha_short: float = 0.2
     shift_alpha_long: float = 0.05
-
-
+    # maks. wiek (dni względem target) ostatniego punktu, by uznać go za „bieżący"
+    # odczyt. 1 = dziś lub wczoraj (temperatura nocna bywa datowana dniem wcześniej).
+    max_current_age_days: int = 1
 # --- ACWR (obciążenie treningowe) -------------------------------------------
 
 

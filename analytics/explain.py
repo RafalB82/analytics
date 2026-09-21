@@ -109,6 +109,11 @@ def _acwr_penalty_reasons(
 
 def _temperature_reasons(temp: dict) -> list[str]:
     status = temp.get("status")
+    if status == "stale":
+        return [
+            f"Temperatura: ostatni pomiar z {temp.get('last_reading_date', '?')} "
+            "jest nieaktualny — pominięty (to nie znaczy, że temperatura jest w normie)"
+        ]
     if status == "no_data" or not temp.get("alert"):
         return ["Brak alertu temperatury (brak danych lub w normie)"]
     alert = temp["alert"]

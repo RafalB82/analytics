@@ -17,7 +17,7 @@ from datetime import date
 
 import numpy as np
 
-from .baseline import compute_ewma_baseline
+from .baseline import compute_ewma_baseline, is_current
 from .config import settings
 from .logging import get_logger
 
@@ -145,7 +145,14 @@ def serialize_temp_output(alert, temp_series, target: date) -> dict:
     """Serializuje alert temperatury do dictu outputu (bez obiektu wewnątrz)."""
     if not temp_series:
         return {"status": "no_data", "alert": None, "alert_message": None}
-
+    if not is_current(temp_series, target):
+        # ostatni pomiar zbyt stary — nie raportuj go jako bieżącego
+        return {
+            "status": "stale",
+            "alert": None,
+            "alert_message": None,
+            "last_reading_date": temp_series[-1].day.isoformat(),
+        }
     bl = compute_temp_baseline(temp_series)
     current_points = [p for p in temp_series if p.day == target]
     current = current_points[0].wrist_temp_c if current_points else temp_series[-1].wrist_temp_c
@@ -161,7 +168,7 @@ def serialize_temp_output(alert, temp_series, target: date) -> dict:
 
 def build_temp_alert(temp_series, hrv_series, target: date) -> TempAlert:
     """Buduje obiekt TempAlert z serii temperatury i HRV (sygnał recovery)."""
-    if not temp_series:
+    if not temp_series or not is_current(temp_series, target):
         return TempAlert(
             triggered=False, deviation_c=0.0, baseline_c=0.0, severity="brak",
             combined_with_hrv_drop=False,
@@ -172,7 +179,7 @@ def build_temp_alert(temp_series, hrv_series, target: date) -> TempAlert:
     current = current_points[0].wrist_temp_c if current_points else temp_series[-1].wrist_temp_c
 
     hrv_dropped = False
-    if hrv_series:
+    if hrv_series and is_current(hrv_series, target):
         bl_hrv = compute_ewma_baseline(hrv_series)
         if bl_hrv and bl_hrv.deviation_pct <= -10:
             hrv_dropped = True

@@ -156,10 +156,20 @@ class TestSerializeTempOutput:
         assert out["alert"] is not None
         assert "alert" in out and "baseline_c" in out
 
-    def test_uses_latest_point_when_target_missing(self):
-        """Gdy target dnia brak w serii -> używa ostatniego punktu."""
-        temp_series = _temps([36.0, 36.0, 36.0], start=date(2026, 7, 25))
-        alert = build_temp_alert(temp_series, [], date(2026, 7, 25))
-        out = serialize_temp_output(alert, temp_series, date(2026, 8, 5))
+    def test_uses_latest_point_when_target_missing_but_recent(self):
+        """Brak punktu dla target, ale ostatni jest z wczoraj -> nadal bieżący."""
+        temp_series = _temps([36.0, 36.0, 36.0], start=date(2026, 7, 25))  # ostatni: 27.07
+        alert = build_temp_alert(temp_series, [], date(2026, 7, 28))
+        out = serialize_temp_output(alert, temp_series, date(2026, 7, 28))
         assert out["status"] == "ok"
         assert out["current_c"] == 36.0
+
+    def test_stale_latest_point_is_not_reported_as_current(self):
+        """ZMIANA (audyt): pomiar sprzed ~9 dni nie może udawać bieżącego."""
+        temp_series = _temps([36.0, 36.0, 36.0], start=date(2026, 7, 25))
+        alert = build_temp_alert(temp_series, [], date(2026, 8, 5))
+        out = serialize_temp_output(alert, temp_series, date(2026, 8, 5))
+        assert alert.triggered is False
+        assert out["status"] == "stale"
+        assert out["alert"] is None
+        assert out["last_reading_date"] == "2026-07-27"

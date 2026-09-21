@@ -80,6 +80,7 @@ def compute_energy_balance(
     expenditure_kcal: float,
     window_days: int | None = None,
     min_valid_days: int | None = None,
+    target: date | None = None,
 ) -> EnergyBalanceResult:
     """
     Bilans energetyczny: sumuje dzienné (zjedzone - wydatek) w oknie wstecz
@@ -87,6 +88,9 @@ def compute_energy_balance(
 
     eaten: lista {day, kcal} (zjedzone z MFP), może być niepełna / pusta.
     expenditure_kcal: referencyjny średni dzienny TDEE — stały w oknie.
+    target: gdy podany, okno kończy się NA target (nie na ostatnim dniu z
+    jedzeniem) i zawsze jest filtrowane po dacie — stare wpisy nie mogą
+    udawać bieżącego tygodnia.
     window_days / min_valid_days: z configu ENERGY_BALANCE.
     """
     window = window_days or settings.ENERGY_BALANCE.balance_window_days
@@ -101,7 +105,17 @@ def compute_energy_balance(
         return _insufficient(eaten, window)
     ref = eaten_sorted[-1].get("day")
     recent = eaten_sorted
-    if window < len(recent):
+    if target is not None:
+        cutoff_t = target - timedelta(days=window - 1)
+        recent = []
+        for e in eaten_sorted:
+            try:
+                d_e = date.fromisoformat(str(e.get("day"))[:10])
+            except ValueError:
+                continue  # wpis bez poprawnej daty nie wchodzi do okna
+            if cutoff_t <= d_e <= target:
+                recent.append(e)
+    elif window < len(recent):
         # okno wstecz od ostatniego dnia z danymi
         ref_date = date.fromisoformat(str(ref)[:10])
         cutoff = ref_date - timedelta(days=window - 1)
@@ -253,10 +267,11 @@ def _insufficient(
 def build_energy_balance_output(
     eaten_series: list[dict],
     expenditure_kcal: float,
+    target: date | None = None,
 ) -> dict:
     """Opcja wejścia dla build_input/pipeline: bierze serie zjedzonych kcal
     i średni wydatek (target_kcal z nutrition), zwraca dict gotowy do raportu."""
-    res = compute_energy_balance(eaten_series, expenditure_kcal)
+    res = compute_energy_balance(eaten_series, expenditure_kcal, target=target)
     return {
         "status": res.status,
         "window_days": res.window_days,

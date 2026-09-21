@@ -45,6 +45,23 @@ class TrendResult:
     reliable: bool                # czy R^2 i liczba punktów wystarczające
 
 
+def is_current(series: list, target: date, max_age_days: int | None = None) -> bool:
+    """Czy OSTATNI punkt szeregu jest „bieżący'' względem `target`.
+
+    Szeregi są rzadkie (tylko dni z danymi), więc `series[-1]` bywa sprzed
+    tygodnia. Bez tej kontroli stary odczyt byłby raportowany i punktowany jako
+    „dzisiejszy''. Działa na dowolnym punkcie z atrybutem `.day`
+    (MetricPoint, TempPoint). Pusty szereg -> False; punkt z przyszłości
+    (po target) -> False.
+    """
+    if not series:
+        return False
+    if max_age_days is None:
+        max_age_days = settings.BASELINE.max_current_age_days
+    age = (target - series[-1].day).days
+    return bool(0 <= age <= max_age_days)
+
+
 def compute_ewma_baseline(
     series: list[MetricPoint],
     alpha: float | None = None,

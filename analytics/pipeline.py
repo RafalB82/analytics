@@ -179,6 +179,7 @@ def analytics_stage(ctx: PipelineContext) -> PipelineContext:
         gap=ctx.acwr_info.get("gap"),
         rpe_coverage_pct=(ctx.acwr_info.get("rpe_coverage") or {}).get("coverage_pct"),
         rhr_trend=ctx.trend_rhr,
+        target=ctx.target,
     )
     ctx.goal_info = nutr_mod.build_goal_output(m["energy_series"], m["weight_info"], ctx.params)
 
@@ -188,7 +189,7 @@ def analytics_stage(ctx: PipelineContext) -> PipelineContext:
     from . import energy_balance as eb_mod
     target_kcal = ctx.goal_info.get("tdee_kcal") if ctx.goal_info.get("status") == "ok" else None
     ctx.energy_balance = eb_mod.build_energy_balance_output(
-        ctx.mfp_daily_kcal, target_kcal,
+        ctx.mfp_daily_kcal, target_kcal, target=ctx.target,
     ) if target_kcal else {"status": "skipped", "reason": "brak target_kcal (TDEE niedostępny)"}
 
     return ctx
@@ -283,9 +284,15 @@ def explain_stage(ctx: PipelineContext) -> PipelineContext:
         rhr_dev = rhr_bl.deviation_abs
     # zachowane w ctx (nie tylko lokalnie) — serialization_stage z nich buduje
     # sekcję "recovery_today" (dzisiejszy realny odczyt HRV/RHR + trend + jakość snu)
+    # nieaktualny sygnał (patrz compute_full_readiness) nie jest „dzisiejszym"
+    # odczytem — nie wchodzi ani do explain, ani do recovery_today
+    stale = set(getattr(ctx.readiness, "stale_signals", []) or [])
+    if "hrv" in stale:
+        hrv_bl = hrv_dev = None
+    if "rhr" in stale:
+        rhr_bl = rhr_dev = None
     ctx.hrv_baseline = hrv_bl
     ctx.rhr_baseline = rhr_bl
-
     trend_note = getattr(ctx.readiness, "trend_note", None)
     sleep_missing = getattr(ctx.readiness, "sleep_missing", False)
     rpe_cov = ctx.acwr_info.get("rpe_coverage")
@@ -350,6 +357,10 @@ def serialization_stage(ctx: PipelineContext) -> PipelineContext:
             "rhr_deviation_bpm": ctx.rhr_baseline.deviation_abs if ctx.rhr_baseline else None,
             "sleep_hours": m.get("sleep_hours_today"),
             "sleep_missing": m.get("sleep_hours_today") is None,
+            # data ostatniego odczytu — jawnie, żeby stary pomiar nie wyglądał na dzisiejszy
+            "hrv_date": m["hrv_series"][-1].day.isoformat() if m["hrv_series"] else None,
+            "rhr_date": m["rhr_series"][-1].day.isoformat() if m["rhr_series"] else None,
+            "stale_signals": list(getattr(ctx.readiness, "stale_signals", []) or []),
         },
         confidence=ctx.confidence or None,
         weight_trend=ctx.weight_trend,

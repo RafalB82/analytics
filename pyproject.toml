@@ -39,7 +39,10 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM"]
 ignore = ["E501"]  # line-length egzekwowany przez formattera
 
 [tool.mypy]
-python_version = "3.10"
+# 3.12, nie 3.10: stuby numpy >= 2.5 używają składni `type X = ...` (3.12+) i mypy
+# z python_version = "3.10" nie potrafi ich sparsować. Zgodność z 3.10 pilnuje macierz
+# pytest (3.10/3.12/3.13) oraz ruff (target-version = "py310").
+python_version = "3.12"
 strict = false
 warn_return_any = true
 warn_unused_configs = true

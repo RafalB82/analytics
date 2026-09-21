@@ -147,11 +147,16 @@ class TestMalformedDays:
         assert res.n_valid_days == 7
 
     def test_sparse_old_entries_do_not_pose_as_current_window(self):
-        # 3 wpisy sprzed ~miesiąca: bez filtra po dacie zostałyby uznane za okno
+        # 3 wpisy sprzed ~miesiąca. Wcześniej (mniej wpisów niż okno) liczyły się
+        # wszystkie niezależnie od wieku; z target=dziś żaden nie wpada w okno.
         eaten = [_eaten(30 + i, 2500) for i in range(3)]
+        res = compute_energy_balance(eaten, expenditure_kcal=2600, target=date(2026, 8, 9))
+        assert res.status != "ok"
+        assert res.n_valid_days == 0
+
+    def test_sparse_old_entries_are_filtered_without_target_too(self):
+        # bez target okno kończy się na ostatnim dniu z danymi: wpis sprzed 30 dni
+        # nie może wejść do okna 7d razem z 6 świeżymi dniami
+        eaten = [_eaten(i, 2500) for i in range(6)] + [_eaten(30, 100)]
         res = compute_energy_balance(eaten, expenditure_kcal=2600)
-        # okno liczone wstecz od ostatniego dnia z danymi -> wpisy są sobie "bieżące",
-        # ale z target=dziś żaden nie wpada w okno
-        res_t = compute_energy_balance(eaten, expenditure_kcal=2600, target=date(2026, 8, 9))
-        assert res_t.status != "ok"
-        assert res is not None
+        assert all(d["day"] != _eaten(30, 0)["day"] for d in res.daily)

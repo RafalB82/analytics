@@ -53,8 +53,9 @@ pythonpath = ["."]
 
 [tool.coverage.run]
 source = ["analytics", "mcp_fetchers"]
-# demo_full to skrypt demonstracyjny, a fetch_mcp.py w części transportowej
-# (McpStdioClient, main/cron) wymaga żywych serwerów MCP — logika czysta jest testowana.
+# demo_full to skrypt demonstracyjny. fetch_mcp.py jest liczony do pokrycia, ale jego
+# część transportowa (klient stdio, ścieżki wymagające żywych serwerów MCP) nie jest
+# testowana — testowana jest logika czysta i orkiestracja na fałszywym kliencie.
 omit = ["analytics/demo_full.py"]
 
 [tool.coverage.report]

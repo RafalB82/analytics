@@ -281,14 +281,17 @@ def test_pipeline_does_not_import_run_analysis():
 # --- sekcja 6.2a: rozbicie confidence (trend vs próbka) ---------------------
 class TestTrendConfidenceBreakdown:
     def test_label_high_when_reliable(self):
-        assert _trend_confidence_label(True, 0.9) == "High"
+        t = TrendResult(slope=0.15, r_squared=0.9, direction="rosnący", reliable=True)
+        assert _trend_confidence_label(t) == "High"
 
     def test_label_low_when_unreliable(self):
         # R²=0.02 -> trend to szum, niezależnie od liczby punktów próbki
-        assert _trend_confidence_label(False, 0.02) == "Low"
+        t = TrendResult(slope=0.15, r_squared=0.02, direction="stabilny", reliable=False)
+        assert _trend_confidence_label(t) == "Low"
 
     def test_label_brak_danych_when_none(self):
-        assert _trend_confidence_label(None, None) == "brak danych"
+        # ta gałąź była wcześniej nieosiągalna: reliable jest z definicji boolem
+        assert _trend_confidence_label(None) == "brak danych"
 
     def test_serialize_trend_none(self):
         assert _serialize_trend(None, {}) is None

@@ -22,16 +22,23 @@ from ..exceptions import InvalidMetricError
 
 
 def coerce_float(value: Any, metric: str, *, allow_none: bool = False) -> float | None:
-    """Konwertuje `value` na float, przepuszczając None (opcjonalnie).
+    """Konwertuje `value` na float.
 
     Rzuca `InvalidMetricError` na NaN / inf / niekonwertowalne — bo te
     wartości nie są "brakiem danych", tylko uszkodzeniem, które cicho
     zafałszowałoby obliczenia.
+
+    `allow_none=False` (domyślnie) odrzuca `None` jako brak wymaganej
+    wartości; `allow_none=True` przepuszcza `None` i zwraca `None`.
+    Wcześniej obie gałęzie zwracały `None`, więc przełącznik niczego nie
+    zmieniał, a walidacja wymaganych metryk (np. HRV) faktycznie nie
+    następowała. Metryki opcjonalne (nocny odczyt, temperatura danego dnia)
+    muszą przekazać `allow_none=True`.
     """
     if value is None:
         if allow_none:
             return None
-        return None  # brak wartości -> None (pomijane przez fetch_*)
+        raise InvalidMetricError(metric, None, "brak wymaganej wartości (use allow_none=True dla opcjonalnych)")
     try:
         f = float(value)
     except (TypeError, ValueError) as e:

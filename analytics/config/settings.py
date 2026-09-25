@@ -230,6 +230,11 @@ class ReadinessSettings:
     #: granice stref po liczbie punktów (zielona <= g1, żółta <= g2, reszta czerwona)
     zone_green_max: int = 1
     zone_yellow_max: int = 3
+    #: Próg wiarygodności danych, poniżej którego werdykt nie może być green.
+    #: Fail-closed: brak/nieaktualne sygnały regeneracji pomijają składniki
+    #: scoringu, co ZAWSZE obniża base i może dać "regeneracja ok" — bez tego
+    #: progu im mniej danych, tym jaśniejsza zielona strefa.
+    verdict_requires_data_quality: str = "low"
 
 
 # --- Confidence (faza 2.0: wiarygodność metryk) ----------------------------

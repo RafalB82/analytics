@@ -657,6 +657,18 @@ interpretowany razem z pozostałymi sygnałami.
 
 Dane są niewystarczające do wiarygodnego określenia gotowości.
 
+Werdykt **nie może** być `green`, gdy `data_quality.status` jest poniżej progu
+`READINESS.verdict_requires_data_quality` (domyślnie `low`). Powód jest fail-closed:
+składniki scoringu, dla których brak danych, są **pomijane** (brak HRV nie karze,
+brak snu nie karze), więc mniej danych obniża `base`, a to z definicji zwiększa
+szansę na `regeneracja ok` → `green`. Bez tej bramki system rekomendował
+„pełną objętość” dokładnie wtedy, gdy ocena była najmniej wiarygodna.
+
+`inconclusive` ma rangę **poniżej** `green`, ale legacy `czerwona` wciąż jest
+od niej silniejsze i podnosi werdykt do `orange` — stan „nie wiadomo” nie może
+zmywać jednoznacznie złego sygnału. `data_quality` `medium` (jedna uwaga,
+np. sam brak snu) werdyktu nie blokuje.
+
 ---
 
 # Przykładowa interpretacja

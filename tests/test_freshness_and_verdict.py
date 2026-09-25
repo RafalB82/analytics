@@ -73,6 +73,54 @@ class TestVerdictMatrix:
         assert v["zone"] == "green"
 
 
+# ------------------------------------------------ fail-closed: DATA_QUALITY
+class TestVerdictFailsClosedOnLowDataQuality:
+    """Regresja: werdykt był fail-open.
+
+    Składniki scoringu bez danych są POMIJANE (brak HRV nie karze, brak snu nie
+    karze), więc mniej danych obniża `base` i zwiększa szansę na
+    `regeneracja ok` -> green. Bez bramki jakości system rekomendował
+    "pełną objętość, RPE 9" dokładnie wtedy, gdy ocena była najmniej wiarygodna.
+    """
+
+    @staticmethod
+    def _dq(status):
+        return {"status": status, "notes": ["x", "y"] if status == "low" else []}
+
+    def test_good_recovery_stays_green_at_high_quality(self):
+        assert build_verdict(_rec("ok"), _load("moderate"), data_quality=self._dq("high"))["zone"] == "green"
+
+    def test_single_note_medium_quality_does_not_block(self):
+        # jedna uwaga (np. brak snu) to "medium" — nie blokuje, bo macierz
+        # wciąż operuje na realnych sygnałach regeneracji
+        assert build_verdict(_rec("ok"), _load("moderate"), data_quality=self._dq("medium"))["zone"] == "green"
+
+    def test_low_quality_never_green(self):
+        v = build_verdict(_rec("ok"), _load("low"), data_quality=self._dq("low"))
+        assert v["zone"] == "inconclusive"
+        # nie asertujemy stanu fizjologicznego, tylko brak podstaw do rekomendacji
+        assert "pełna objętość" not in v["advice"]
+
+    def test_inconclusive_beats_green_but_not_legacy_red(self):
+        # fail-closed: legacy czerwona nadal podnosi do orange, wiec stan
+        # „nie wiadomo" nie może zmywać jednoznacznie złego sygnału
+        v = build_verdict(_rec("ok"), _load("low"), legacy_zone="czerwona", data_quality=self._dq("low"))
+        assert v["zone"] == "orange"
+
+    @pytest.mark.parametrize("legacy", [None, "zielona", "żółta"])
+    def test_non_red_legacy_does_not_rescue_inconclusive(self, legacy):
+        v = build_verdict(_rec("ok"), _load("low"), legacy_zone=legacy, data_quality=self._dq("low"))
+        assert v["zone"] == "inconclusive"
+
+    def test_unknown_quality_status_is_treated_as_low(self):
+        v = build_verdict(_rec("ok"), _load("low"), data_quality={"status": "???", "notes": []})
+        assert v["zone"] == "inconclusive"
+
+    def test_omitted_data_quality_keeps_legacy_behaviour(self):
+        # zgodność wsteczna dla dotychczasowych wywołań bez argumentu
+        assert build_verdict(_rec("ok"), _load("moderate"))["zone"] == "green"
+
+
 # ------------------------------------------------------------- is_current
 class TestIsCurrent:
     def test_today_and_yesterday_are_current(self):
@@ -262,3 +310,40 @@ class TestEndToEnd:
         assert rt["stale_signals"] == ["hrv"]
         assert r["readiness"]["stale_signals"] == ["hrv"]
         assert any("HRV" in n for n in r["readiness"]["data_quality"]["notes"])
+
+
+# ------------------------------------------- e2e: fail-closed na compute_full_readiness
+class TestComputeFullReadinessFailsClosed:
+    """Regresja z audytu: HRV nieaktualny + brak snu + zerowe obciążenie.
+
+    Reprodukcja przed poprawką dawała:
+        verdict = {zone: green, advice: "pełna objętość", max_rpe: "RPE 9..."}
+        data_quality = {status: low, notes: [Nieaktualny HRV, Brak snu]}
+    czyli ocena "low" rekomendowała trening o pełnej objętości.
+    """
+
+    @staticmethod
+    def _readiness(hrv, rhr, sleep):
+        return compute_full_readiness(
+            hrv, rhr, sleep, ACWRResult(acute_load=0.0, chronic_load=0.0, ratio=0.0, zone="niska"),
+            TempAlert(triggered=False, deviation_c=0.0, baseline_c=36.5, severity="brak"),
+            False, target=T,
+        )
+
+    def test_stale_hrv_and_no_sleep_is_not_green(self):
+        # HRV konczy sie 10 dni przed targetem => pominięty w scoringu
+        hrv = [MetricPoint(day=T - timedelta(days=20 + i), value=60.0) for i in range(30)]
+        rhr = _series([50.0] * 30)
+        out = self._readiness(hrv, rhr, None)
+        assert out.data_quality["status"] == "low"
+        assert out.verdict["zone"] == "inconclusive"
+        assert "pełna objętość" not in out.verdict["advice"]
+
+    def test_fresh_data_still_green(self):
+        # ta sama ścieżka z danymi o dziś => werdykt bez zmian
+        rhr = _series([50.0] * 30)
+        hrv = _series([60.0] * 30)
+        out = self._readiness(hrv, rhr, 8.0)
+        assert out.data_quality["status"] == "high"
+        assert out.verdict["zone"] == "green"
+        assert out.verdict["advice"] == "pełna objętość"

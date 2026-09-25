@@ -236,7 +236,36 @@ def classify_data_quality(
     return {"status": status, "notes": notes}
 
 
-_ZONE_RANK = {"green": 0, "orange": 1, "red": 2}
+#: ranking wiarygodności: im niżej, tym gorsza
+_DQ_RANK = {"low": 0, "medium": 1, "high": 2}
+
+
+def _dq_rank(status: str | None) -> int:
+    """Ranking statusu data_quality; brak/nieznana wartość traktujemy jako low
+    (fail-closed: raczej zaniżyć werdykt niż podnieść)."""
+    return _DQ_RANK.get(status or "", 0)
+
+
+#: Ranga stref werdyktu. `inconclusive` jest PONIŻEJ green: to stan „nie
+#: wiadomo", nie „wolno trenować pełną objętością". Dzięki ujemnej randze
+#: podbicie do orange przez legacy score nadal działa (fail-closed).
+_ZONE_RANK = {"inconclusive": -1, "green": 0, "orange": 1, "red": 2}
+
+_INCONCLUSIVE_VERDICT = {
+    "zone": "inconclusive",
+    "max_rpe": "max RPE 8 (traktuj jako trening kontrolny)",
+    "advice": (
+        "brak podstaw do rekomendacji objętości — uzupełnij dane "
+        "(świeży HRV/RHR + sen) i powtórz analizę"
+    ),
+    "rationale": (
+        "Dane regeneracyjne zbyt stare lub niekompletne, więc ocena "
+        "wiarygodności jest niska. Brak sygnałów oznak pogorszenia nie jest "
+        "tu jednoznaczny z brakiem oznak — macierz LOAD x RECOVERY rozważa "
+        "składniki, których nie było w danych, więc jej wynik w takiej "
+        "sytuacji nie jest miarodajny."
+    ),
+}
 
 
 def _matrix_verdict(recovery: dict, load: dict) -> dict:
@@ -290,7 +319,12 @@ def _matrix_verdict(recovery: dict, load: dict) -> dict:
     }
 
 
-def build_verdict(recovery: dict, load: dict, legacy_zone: str | None = None) -> dict:
+def build_verdict(
+    recovery: dict,
+    load: dict,
+    legacy_zone: str | None = None,
+    data_quality: dict | None = None,
+) -> dict:
     """Werdykt: semantyka stref wg połączenia LOAD i RECOVERY.
 
     NADRZĘDNOŚĆ (faza 10.4): to pole jest rekomendowaną interpretacją strefy
@@ -298,8 +332,22 @@ def build_verdict(recovery: dict, load: dict, legacy_zone: str | None = None) ->
     minimum z legacy score: gdy `legacy_zone == "czerwona"` (łączny score >= 4),
     werdykt jest podnoszony co najmniej do orange. Sama macierz LOAD x RECOVERY
     (patrz `_matrix_verdict`) nadal decyduje o red (wysoki load + critical).
+
+    FAIL-CLOSED (data_quality): gdy wiarygodność danych jest poniżej progu
+    `settings.READINESS.verdict_requires_data_quality`, werdykt nie może być
+    `green`. Składniki scoringu, dla których brak danych, są POMIJANE
+    (`hrv_deviation_pct=None` nie karze, `sleep_hours=None` nie karze), więc
+    mniej danych obniża `base`, a to z definicji zwiększa szansę na
+    `regeneracja ok` -> green. Bez tej bramki system rekomendował „pełną
+    objętość, RPE 9" dokładnie wtedy, gdy ocena była najmniej wiarygodna.
+    Zamiast zmyślać twierdzenie o złej regeneracji (orange) zwracamy
+    `inconclusive` — stan „nie wiadomo", zgodny z README.
     """
-    verdict = _matrix_verdict(recovery, load)
+    threshold = settings.READINESS.verdict_requires_data_quality
+    if data_quality is not None and _dq_rank(data_quality.get("status")) <= _dq_rank(threshold):
+        verdict = dict(_INCONCLUSIVE_VERDICT)
+    else:
+        verdict = _matrix_verdict(recovery, load)
     if legacy_zone == "czerwona" and _ZONE_RANK[verdict["zone"]] < _ZONE_RANK["orange"]:
         verdict = {
             "zone": "orange",
@@ -423,7 +471,7 @@ def compute_full_readiness(
         rpe_coverage_pct=rpe_coverage_pct,
         stale_signals=stale,
     )
-    verdict = build_verdict(recovery, load, legacy_zone=zone)
+    verdict = build_verdict(recovery, load, legacy_zone=zone, data_quality=data_quality)
 
     return ReadinessOutput(
         base_score=base,

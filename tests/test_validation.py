@@ -165,7 +165,7 @@ class TestValidateInput:
     """Testy validate_input (przeniesiony do validators/input.py, krok 2/9)."""
 
     def test_valid_returns_components(self):
-        source, target, params, apple_daily, hevy, app_wk, cardio, temp = validate_input(_input_payload())
+        source, target, params, apple_daily, hevy, app_wk, cardio, temp, mfp = validate_input(_input_payload())
         assert source == "apple+hevy+mfp"
         assert target == date(2026, 8, 7)
         assert apple_daily
@@ -174,6 +174,7 @@ class TestValidateInput:
         assert app_wk == []
         assert cardio == []
         assert temp == []
+        assert mfp == []
 
     def test_bad_source_rejected(self):
         with pytest.raises(InvalidMetricError):
@@ -196,5 +197,32 @@ class TestValidateInput:
         assert target == date.today()
 
     def test_optional_fields_default_empty(self):
-        _, _, _, _, hevy, app_wk, cardio, temp = validate_input(_input_payload(target_date="2026-08-07"))
-        assert hevy == [] and app_wk == [] and cardio == [] and temp == []
+        _, _, _, _, hevy, app_wk, cardio, temp, mfp = validate_input(_input_payload(target_date="2026-08-07"))
+        assert hevy == [] and app_wk == [] and cardio == [] and temp == [] and mfp == []
+
+
+class TestValidateInputListFields:
+    """Regresja: `apple_temp` nie był walidowany, a `mfp_daily_kcal` w ogóle nie
+    trafiał do validate_input. Zły typ dawał nieobsłużony AttributeError
+    (traceback z CLI) zamiast InvalidMetricError (JSON z błędem)."""
+
+    @pytest.mark.parametrize("field", ["apple_temp", "mfp_daily_kcal"])
+    @pytest.mark.parametrize("value", [{"oops": "dict"}, "notalist", 42])
+    def test_wrong_type_rejected(self, field, value):
+        with pytest.raises(InvalidMetricError):
+            validate_input(_input_payload(**{field: value}))
+
+    @pytest.mark.parametrize("field", ["apple_temp", "mfp_daily_kcal"])
+    def test_explicit_none_means_missing(self, field):
+        # jawne None to "brak danych", nie zły typ
+        assert validate_input(_input_payload(**{field: None}))[-1] == []
+
+    def test_empty_dict_is_rejected_not_silently_empty(self):
+        # {} jest falszywe, wiec `x or []` zamieniałoby je w pustą listę;
+        # jawne None znaczy brak, a pusty dict to błąd typu
+        with pytest.raises(InvalidMetricError):
+            validate_input(_input_payload(apple_temp={}))
+
+    def test_mfp_daily_kcal_is_returned(self):
+        rows = [{"day": "2026-08-07", "kcal": 2400.0}]
+        assert validate_input(_input_payload(mfp_daily_kcal=rows))[-1] == rows

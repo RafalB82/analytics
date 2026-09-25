@@ -257,7 +257,7 @@ class TestParseInput:
 
 class TestValidateInput:
     def test_valid_payload(self):
-        source, target, params, apple_daily, hevy, apple_w, cardio, temp = validate_input(_payload())
+        source, target, params, apple_daily, hevy, apple_w, cardio, temp, mfp = validate_input(_payload())
         assert source == "apple+hevy+mfp"
         assert target == date(2026, 8, 7)
         assert cardio == []  # domyślnie brak sesji cardio
@@ -270,7 +270,7 @@ class TestValidateInput:
         ]
         p["apple_workouts"] = [{"name": "Outdoor Cycling", "start": "2026-08-06T08:00:00",
                                  "duration_min": 90, "avg_heart_rate_bpm": 140}]
-        source, target, params, apple_daily, hevy, apple_w, cardio, temp = validate_input(p)
+        source, target, params, apple_daily, hevy, apple_w, cardio, temp, mfp = validate_input(p)
         assert len(cardio) == 1
         assert cardio[0]["rpe"] == 6
         assert len(apple_w) == 1

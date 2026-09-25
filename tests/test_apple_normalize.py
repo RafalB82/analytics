@@ -31,8 +31,9 @@ class TestNormalizeWorkoutDeterminism:
         jako duplikat."""
         w1 = _cardio("X1", start="2026-08-01T10:00:00")
         w2 = _cardio("X1", start="2026-08-05T10:00:00")
-        assert normalize_workout(w1) is not None
-        assert normalize_workout(w2) is not None  # inna data -> OK
+        # świeży set na każde wywołanie = brak dedupe między wywołaniami
+        assert normalize_workout(w1, set()) is not None
+        assert normalize_workout(w2, set()) is not None  # inna data -> OK
 
     def test_shared_seen_set_deduplicates_within_run(self):
         """Współdzielony set w obrębie jednego przebiegu: prawdziwy duplikat
@@ -54,16 +55,16 @@ class TestNormalizeWorkoutDeterminism:
     def test_strength_workout_rejected(self):
         w = {"id": "S1", "name": "Traditional Strength Training",
              "start": "2026-08-01T10:00:00", "duration_min": 60, "avg_heart_rate_bpm": 140}
-        assert normalize_workout(w) is None
+        assert normalize_workout(w, set()) is None
 
     def test_missing_hr_rejected(self):
         w = {"id": "H1", "name": "Outdoor Cycling", "start": "2026-08-01T10:00:00",
              "duration_min": 60, "avg_heart_rate_bpm": None}
-        assert normalize_workout(w) is None
+        assert normalize_workout(w, set()) is None
 
     def test_duration_from_seconds(self):
         w = {"id": "T1", "name": "Outdoor Cycling", "start": "2026-08-01T10:00:00",
              "duration_s": 3600, "avg_heart_rate_bpm": 140}
-        out = normalize_workout(w)
+        out = normalize_workout(w, set())
         assert out is not None
         assert out["duration_min"] == 60.0

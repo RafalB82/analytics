@@ -100,27 +100,27 @@ def is_cardio(workout: dict) -> bool:
     return any(kw in name for kw in CARDIO_NAMES)
 
 
-def normalize_workout(w: dict, seen_ids: set[str] | None = None) -> dict | None:
+def normalize_workout(w: dict, seen_ids: set[str]) -> dict | None:
     """Workout z apple__list_recent_workouts -> format analytics (tylko cardio).
 
     Dedupe po `id`: surowe dane Apple mogą zawierać zdublowane kopie tej samej
     sesji (pole `deduped_copies` > 1). Skrypt przepuszcza tylko pierwszą kopię
     per id — reszta to artefakt, nie osobne treningi.
 
-    seen_ids: opcjonalny set id już przepuszczonych w bieżącym przebiegu.
-    Gdy None (domyślnie), funkcja używa ŚWIEŻEGO setu lokalnego — deterministyczna,
-    niezależna od wywołań poprzednich. Gdy chcesz deduplikować w obrębie JEDNEGO
-    przebiegu (np. pętla po wszystkich workoutach w main()/_run_analysis),
-    przekaż wspólny set jawnie.
+    seen_ids: WYMAGANY set id przepuszczonych w bieżącym przebiegu — dziel go
+    przez całą pętlę. Parametr był wcześniej opcjonalny z `None` jako domyślną,
+    co czyniło dedupe no-op (świeży set na każde wywołanie, gałąź "już widziane"
+    nieosiągalna) przy jednoczesnej obietnicy w docstringu, że zdublowane kopie
+    są odrzucane. Wszystkie wywołania przekazują wspólny set, więc wymuszenie
+    parametru usuwa martwą gałąź zamiast ją ukrywać.
     """
     if not is_cardio(w):
         return None
-    dedupe = seen_ids if seen_ids is not None else set()
     w_id = w.get("id")
     if w_id is not None:
-        if w_id in dedupe:
+        if w_id in seen_ids:
             return None
-        dedupe.add(w_id)
+        seen_ids.add(w_id)
     avg = w.get("avg_heart_rate_bpm")
     if avg is None:
         return None

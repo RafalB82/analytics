@@ -77,7 +77,7 @@ class TestAppleMain:
         {"name": "Walking Lunges", "duration_min": 30, "avg_heart_rate_bpm": 120},  # czarna lista
     ])
     def test_rejected_workouts(self, w):
-        assert apple_normalize.normalize_workout(w) is None
+        assert apple_normalize.normalize_workout(w, set()) is None
 
     @pytest.mark.parametrize("p", [
         {"date": "2026-08-08", "value": "x"},

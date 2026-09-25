@@ -314,3 +314,53 @@ class TestMcpStdioClientReadTimeout:
         finally:
             os.close(w)
             c._proc.stdout.close()
+
+
+class TestHttpResponseCorrelation:
+    """Odpowiedź musi być skorelowana z id żądania.
+
+    Serwer SSE może wysłać po odpowiedzi kolejny blok progress/notification.
+    Bez korelacji "ostatni blok data:" wygrywałby nawet jeśli to nie jest
+    odpowiedź na nasze żądanie. Klient stdio robi to poprawnie — utrzymujemy
+    jedną semantykę dla obu transportów.
+    """
+
+    def test_id_match_wins_over_later_block(self):
+        c = McpHttpClient("http://x")
+        body = 'data: {"id": 7, "result": {"ok": true}}\ndata: {"id": 9, "result": {"ok": false}}\n'
+        assert c._parse_sse_or_json(body, {"id": 7})["result"] == {"ok": True}
+        assert c._parse_sse_or_json(body, {"id": 9})["result"] == {"ok": False}
+
+    def test_without_request_id_keeps_last_valid_block(self):
+        c = McpHttpClient("http://x")
+        body = 'data: {"result": {"ok": 1}}\ndata: {"result": {"ok": 2}}\n'
+        assert c._parse_sse_or_json(body, {})["result"] == {"ok": 2}
+
+    def test_error_block_without_id_still_raises(self):
+        c = McpHttpClient("http://x")
+        with pytest.raises(JsonRpcError):
+            c._parse_sse_or_json('data: {"error": {"code": -1}}\n', {})
+
+
+class TestWorkoutPrefilter:
+    """Brak start_time = nie wiadomo, czy w oknie -> fail-closed, bez round-tripu."""
+
+    def test_summaries_without_start_time_are_not_fetched(self):
+        summaries = [
+            {"id": "ok1", "start_time": "2026-08-08T10:00:00+00:00"},
+            {"id": "nostart"},                                            # brak start_time
+            {"start_time": "2026-08-08T11:00:00+00:00"},                # brak id
+        ]
+        detail = {"workout": {
+            "id": "ok1", "start_time": "2026-08-08T10:00:00+00:00", "title": "Push",
+            "exercises": [{"title": "Bench", "sets": [
+                {"type": "normal", "weight_kg": 100, "reps": 5, "rpe": 8}]}]}}
+
+        def _page(a):
+            return summaries if a["page"] == 1 else []
+
+        client = FakeClient({"get-workouts": _page, "get-workout": lambda a: detail})
+        raw = fetch_hevy(client, "2026-08-09", lookback_days=14)
+        fetched = [a["workout_id"] for t, a in client.calls if t == "get-workout"]
+        assert fetched == ["ok1"]        # nostart i noid pominięte
+        assert [r["workout"]["id"] for r in raw] == ["ok1"]

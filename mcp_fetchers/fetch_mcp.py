@@ -105,19 +105,31 @@ class McpHttpClient:
         return self._parse_sse_or_json(body, payload)
 
     def _parse_sse_or_json(self, body: str, payload: dict) -> dict:
+        want_id = payload.get("id")
         if body.lstrip().startswith("{"):
             return self._check(json.loads(body), payload)
-        # SSE: wiele bloków "data: {...}"
-        result = None
+        # SSE: wiele bloków "data: {...}". Po odpowiedzi serwer może wysłać
+        # jeszcze progress/notification — bez korelacji po id ostatni blok
+        # "data:" wygrywałby nawet jeśli to nie jest odpowiedź na nasze żądanie.
+        # Klient stdio (McpStdioClient) robi to poprawnie, więc trzymamy się
+        # jednej semantyki dla obu transportów.
+        fallback = None
         for line in body.splitlines():
-            if line.startswith("data:"):
-                try:
-                    result = json.loads(line[5:].strip())
-                except json.JSONDecodeError:
-                    continue
-        if result is None:
-            raise JsonRpcError(f"brak wyniku MCP HTTP: {body[:200]}")
-        return self._check(result, payload)
+            if not line.startswith("data:"):
+                continue
+            try:
+                msg = json.loads(line[5:].strip())
+            except json.JSONDecodeError:
+                continue
+            if want_id is not None and msg.get("id") == want_id:
+                return self._check(msg, payload)
+            # bez id w żądaniu (np. notification) albo gdy serwer nie poda id,
+            # zostajemy przy dotychczasowym zachowaniu: ostatni poprawny blok
+            if "result" in msg or "error" in msg:
+                fallback = msg
+        if fallback is not None:
+            return self._check(fallback, payload)
+        raise JsonRpcError(f"brak wyniku MCP HTTP: {body[:200]}")
 
     @staticmethod
     def _check(msg: dict, payload: dict) -> dict:
@@ -241,8 +253,17 @@ class McpStdioClient:
         return result or {}
 
     def close(self) -> None:
+        # zamykamy pipe'y i czekamy na proces: samo terminate() zostawia
+        # zombie do końca przebiegu, a `suppress` nie odróżniał "już nie żyje"
+        for stream in (self._proc.stdin, self._proc.stdout):
+            if stream:
+                with suppress(Exception):
+                    stream.close()
         with suppress(Exception):
             self._proc.terminate()
+            self._proc.wait(timeout=5)
+        with suppress(Exception):
+            self._proc.kill()
 
 
 # ---------------------------------------------------------------------------
@@ -283,9 +304,15 @@ def fetch_hevy(client, target: str,
     raw = []
     for w in all_summaries:
         st = (w.get("start_time") or "")[:10]
-        if st and st < window_start:
+        # fail-closed: brak start_time = nie wiadomo, czy w oknie, a normalize
+        # i tak odrzuci taki workout po krótszym obrocie. Bez tego warunku
+        # pusty start_time przechodził do get-workout (po jednym round-tripie
+        # na rekord, nawet z id=None).
+        if not st or st < window_start:
             continue
         wid = w.get("id")
+        if wid is None:
+            continue
         detail = client.call_tool("get-workout", {"workout_id": wid})
         wd = detail.get("workout", detail)
         if wd and wd.get("exercises"):

@@ -3,6 +3,9 @@ oraz parsowanie odpowiedzi JSON-RPC/SSE. Bez sieci."""
 from __future__ import annotations
 
 import json
+import os
+import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -240,6 +243,16 @@ class TestMainOrchestration:
         assert captured["payload"]["apple_daily"] == []
         assert "apple pominięty" in capsys.readouterr().err
 
+    def test_mfp_connection_error_does_not_block_result(self, env, monkeypatch, capsys):
+        # Regresja: blok MFP łapał tylko JsonRpcError, a initialize() rzuca
+        # OSError/URLError przy martwym kontenerze. Wyjątek uciekał z main()
+        # przed _run_analysis() -> brak JSON-a mimo zapisanych Hevy/Apple.
+        tmp_path, captured = env
+        _FakeHttp.fail_urls = {fetch_mcp.MFP_MCP_URL}
+        assert self._run(monkeypatch) == 0
+        assert captured["payload"]["mfp_daily_kcal"] == []
+        assert "mfp pominięty" in capsys.readouterr().err
+
     def test_hevy_down_without_api_key_returns_2(self, env, monkeypatch):
         _FakeHttp.fail_urls = {fetch_mcp.HEVY_MCP_URL}
         monkeypatch.setattr(fetch_mcp, "HEVY_API_KEY", "")
@@ -250,3 +263,54 @@ class TestMainOrchestration:
         out = tmp_path / "result.json"
         self._run(monkeypatch, "--skip-hevy", "--skip-apple", "--skip-mfp", "--out", str(out))
         assert json.loads(out.read_text(encoding="utf-8")) == {"status": "ok"}
+
+
+class TestMcpStdioClientReadTimeout:
+    """Regresja: `readline()` na pipe blokowało w nieskończoność.
+
+    Poprzednio deadline był sprawdzany tylko MIĘDZY liniami, więc serwer,
+    który wstanie, ale nie odpowiada, wieszał cały przebieg — `raise
+    JsonRpcError("timeout…")` było nieosiągalne. Testy używają os.pipe(),
+    więc nie wymagają node w CI.
+    """
+
+    @staticmethod
+    def _client(read_fd: int, timeout: float = 0.5):
+        c = fetch_mcp.McpStdioClient.__new__(fetch_mcp.McpStdioClient)
+        c._id = 0
+        c._timeout = timeout
+        c._buf = b""
+        c._proc = SimpleNamespace(stdin=None, stdout=os.fdopen(read_fd, "rb"))
+        return c
+
+    def test_timeout_when_peer_never_answers(self):
+        r, w = os.pipe()
+        c = self._client(r)
+        try:
+            with pytest.raises(JsonRpcError, match="timeout"):
+                c._read_line(time.time() + 0.5)
+        finally:
+            os.close(w)
+            c._proc.stdout.close()
+
+    def test_eof_reported_immediately(self):
+        # zamknięty stdout nie może kończyć się busy-waitem do deadline
+        r, w = os.pipe()
+        os.close(w)
+        c = self._client(r, timeout=30.0)
+        try:
+            with pytest.raises(JsonRpcError, match="zamknął stdout"):
+                c._read_line(time.time() + 30.0)
+        finally:
+            c._proc.stdout.close()
+
+    def test_line_split_across_writes_is_reassembled(self):
+        r, w = os.pipe()
+        c = self._client(r)
+        try:
+            os.write(w, b'{"id": 1, "res')
+            os.write(w, b'ult": {"ok": 1}}\n')
+            assert json.loads(c._read_line(time.time() + 5))["result"] == {"ok": 1}
+        finally:
+            os.close(w)
+            c._proc.stdout.close()

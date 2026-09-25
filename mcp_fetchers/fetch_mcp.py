@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import os
+import select
 import subprocess
 import sys
 import time
@@ -159,6 +160,7 @@ class McpStdioClient:
     def __init__(self, bin_path: str, api_key: str, timeout: float = 60.0):
         self._id = 0
         self._timeout = timeout
+        self._buf = b""
         env = dict(os.environ)
         env["HEVY_API_KEY"] = api_key
         self._proc = subprocess.Popen(
@@ -166,6 +168,34 @@ class McpStdioClient:
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, env=env,
         )
+
+    def _read_line(self, deadline: float) -> bytes:
+        """Jedna linia JSON z stdout, z twardym limitem czasu.
+
+        `readline()` na pipe blokuje do nowej linii albo EOF, więc deadline
+        z `while time.time() < deadline` nigdy nie był sprawdzany w trakcie
+        czekania — proces, który wstanie, ale nie odpowiada, wieszał cron
+        w nieskończoność. Czytamy nieblokująco przez `select`, a bufor
+        pozwala obsłużyć też linię dostarczoną po kawałkach.
+        """
+        assert self._proc.stdout
+        fd = self._proc.stdout.fileno()
+        while True:
+            newline = self._buf.find(b"\n")
+            if newline >= 0:
+                line, self._buf = self._buf[:newline], self._buf[newline + 1:]
+                return line
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                raise JsonRpcError("timeout czekając na odpowiedź Hevy")
+            ready, _, _ = select.select([fd], [], [], remaining)
+            if not ready:
+                raise JsonRpcError("timeout czekając na odpowiedź Hevy")
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                # proces zamknął stdout — dalej czekanie to busy-wait do timeoutu
+                raise JsonRpcError("Hevy MCP zamknął stdout bez odpowiedzi")
+            self._buf += chunk
 
     def _send(self, method: str, params: dict, notify: bool = False) -> Any:
         self._id += 1
@@ -180,12 +210,8 @@ class McpStdioClient:
             return None
         # czytaj stdout aż do matching id
         deadline = time.time() + self._timeout
-        assert self._proc.stdout
-        while time.time() < deadline:
-            out = self._proc.stdout.readline()
-            if not out:
-                time.sleep(0.05)
-                continue
+        while True:
+            out = self._read_line(deadline)
             try:
                 msg = json.loads(out)
             except json.JSONDecodeError:
@@ -194,7 +220,6 @@ class McpStdioClient:
                 if "error" in msg:
                     raise JsonRpcError(f"Hevy MCP error: {msg['error']}")
                 return msg.get("result", {})
-        raise JsonRpcError("timeout czekając na odpowiedź Hevy")
 
     def initialize(self) -> None:
         self._send("initialize", {"protocolVersion": "2024-11-05",
@@ -421,16 +446,20 @@ def main() -> int:
             print(f"[fetch_mcp] apple pominięty (awaria źródła): {e}", file=sys.stderr)
 
     # ---- MFP (HTTP) — zjedzone kcal dla bilansu energetycznego ----
+    # Łapiemy szeroko, symetrycznie do Apple: initialize() rzuca m.in.
+    # URLError/socket.timeout (kontener MFP martwy albo startuje), a to nie
+    # JsonRpcError. Wąskie łapanie przerywało cały przebieg przed
+    # _run_analysis() — brak JSON-a mimo zapisanych już Hevy/Apple.
     if not args.skip_mfp:
-        print("[fetch_mcp] łączę się z MFP MCP (HTTP)...", file=sys.stderr)
         try:
+            print("[fetch_mcp] łączę się z MFP MCP (HTTP)...", file=sys.stderr)
             m = McpHttpClient(MFP_MCP_URL)
             m.initialize()
             raw_mfp = fetch_mfp(m, args.target, days=MFP_LOOKBACK_DAYS)
             print(f"[fetch_mcp] mfp: {len(raw_mfp)} dni z dziennikiem", file=sys.stderr)
             write_stdin_json(raw_mfp, os.path.join(tmp, "raw_mfp.json"))
-        except JsonRpcError as e:
-            print(f"[fetch_mcp] mfp pominięty: {e}", file=sys.stderr)
+        except Exception as e:
+            print(f"[fetch_mcp] mfp pominięty (awaria źródła): {e}", file=sys.stderr)
 
     # ---- Normalizacja (przez istniejące skrypty) ----
     return _run_analysis(tmp, args)

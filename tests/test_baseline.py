@@ -155,6 +155,39 @@ class TestComputeTrendSlope:
         assert res.reliable is False
         assert res.direction == "stabilny"
 
+    def test_slope_is_per_day_not_per_observation(self):
+        # Regresja: oś x był indeksem pozycji, więc przy serii rzadkiej
+        # slope wychodził w jednostkach/odczyt zamiast jednostkach/dzień.
+        # Odczyty co 2 dni, +1.0 kg na odczyt => prawdziwie 0.5 kg/dzień.
+        # Stary kod zwracał ~1.0 (2x zawyżenie).
+        end = date(2026, 8, 7)
+        series = [
+            MetricPoint(day=end - timedelta(days=2 * (29 - i)), value=70.0 + 1.0 * i)
+            for i in range(30)
+        ]
+        res = compute_trend_slope(series, window_days=90)
+        assert res is not None
+        assert res.direction == "rosnący"
+        # medianowy smoother zniekształca lekko, ale nie o rząd wielkości
+        assert 0.35 < res.slope < 0.65
+
+    def test_sparse_series_older_than_window_excluded(self):
+        # 15 odczytów co 7 dni przy oknie 14 dni mieści tylko 2 punkty w oknie,
+        # a nie "trend" z 14 ostatnich rekordów (błąd sprzed poprawki: okno
+        # liczone po rekordach obejmowało ~14 tygodni).
+        old = [
+            MetricPoint(day=date(2025, 1, 1) + timedelta(days=7 * i), value=50.0 + i)
+            for i in range(15)
+        ]
+        assert compute_trend_slope(old, window_days=14) is None
+        # to samo przy oknie wystarczająco szerokim trend istnieje
+        assert compute_trend_slope(old, window_days=120) is not None
+
+    def test_none_when_all_points_same_day(self):
+        # Brak rozpiętości czasowej => slope nie policzalny
+        same = [MetricPoint(day=date(2026, 8, 7), value=50.0 + i) for i in range(6)]
+        assert compute_trend_slope(same, window_days=7) is None
+
 
 class TestDetectBaselineShift:
     def test_no_shift_when_series_similar(self):

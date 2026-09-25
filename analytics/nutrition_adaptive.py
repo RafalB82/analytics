@@ -284,6 +284,12 @@ def compute_weight_trend(
     Używa serii Apple Health z atrybutami .day/.weight_kg. Zwraca None, gdy za
     mało punktów (< min_points).
 
+    Okno wybieramy po KALENDARZOWEJ dacie, a nie po liczbie rekordów: waga jest
+    ważona niemal codziennie, więc `series[-window_days:]` oznaczałoby
+    window_dni *tygodni*, a `x` jako indeks pozycji dawałby slope w
+    kg/odczyt zamiast kg/dzień (przy ważeniu co tydzień ~7× zawyżenie
+    `weekly_trend_kg`).
+
     Wynik (WeightTrend):
       - slope_kg_per_day: nachylenie regresji liniowej (kg/dzień)
       - rolling_median_kg: mediana wag w oknie (robustny środek ciężkości)
@@ -297,10 +303,21 @@ def compute_weight_trend(
     if len(series) < min_points:
         logger.debug("za mało punktów wagi do trendu: %d (min %d)", len(series), min_points)
         return None
-    recent = sorted(series[-window_days:], key=lambda p: p.day)
-    x = np.arange(len(recent))
-    y = np.array([p.weight_kg for p in recent])
-    if len(x) < 2:
+    newest = max(p.day for p in series)
+    cutoff = newest - timedelta(days=window_days - 1)
+    recent = sorted((p for p in series if p.day >= cutoff), key=lambda p: p.day)
+    if len(recent) < min_points:
+        logger.debug(
+            "okno %d dni obejmuje tylko %d punktów wagi (min %d)",
+            window_days,
+            len(recent),
+            min_points,
+        )
+        return None
+    y = np.array([p.weight_kg for p in recent], dtype=float)
+    origin = recent[0].day
+    x = np.array([(p.day - origin).days for p in recent], dtype=float)
+    if x[-1] == x[0]:
         return None
     slope, _ = np.polyfit(x, y, 1)
     median = float(np.median(y))

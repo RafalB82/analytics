@@ -196,6 +196,29 @@ class TestComputeWeightTrend:
         assert abs(trend.rolling_median_kg - 70.5) < 0.6
         assert trend.weekly_trend_kg > 0
 
+    def test_weekly_weighins_give_kg_per_week(self):
+        # Regresja: x był indeksem pozycji, więc przy ważeniu co tydzień
+        # weekly_trend_kg było ~7x zawyżone (0.7 zamiast 0.1).
+        from analytics.nutrition_adaptive import compute_weight_trend
+        series = [
+            SimpleNamespace(day=date(2026, 7, 1) + timedelta(days=7 * i), weight_kg=80.0 + 0.1 * i)
+            for i in range(8)
+        ]
+        trend = compute_weight_trend(series, window_days=120, min_points=4)
+        assert trend is not None
+        assert trend.weekly_trend_kg == pytest.approx(0.1, abs=0.01)
+        assert trend.slope_kg_per_day == pytest.approx(0.1 / 7, abs=0.002)
+        assert trend.n_points == 8
+
+    def test_none_when_window_holds_too_few_points(self):
+        # 10 ważeń tygodniowych przy oknie 14 dni mieści tylko ~3 punkty
+        from analytics.nutrition_adaptive import compute_weight_trend
+        series = [
+            SimpleNamespace(day=date(2026, 7, 1) + timedelta(days=7 * i), weight_kg=80.0 + 0.1 * i)
+            for i in range(10)
+        ]
+        assert compute_weight_trend(series, window_days=14, min_points=8) is None
+
 
 class TestAdjustTdee:
     """Rezerwa: korekta celu z trendu wagi (gdy trend będzie dostępny)."""

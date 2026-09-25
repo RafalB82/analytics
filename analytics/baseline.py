@@ -9,7 +9,7 @@ Zależności: numpy
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 
 import numpy as np
 
@@ -154,6 +154,11 @@ def compute_trend_slope(
     kierunku. `reliable=False` gdy R^2 zbyt niski (dane zbyt szumiące,
     trend niepewny) — w takim wypadku traktuj jako "stabilny" / brak
     sygnału, nie ufaj kierunkowi.
+
+    UWAGA: serie są rzadkie (tylko dni z odczytem), więc okno wybieramy po
+    KALENDARZOWEJ dacie, a nie po liczbie rekordów, i oś x to przesunięcie
+    w dniach, nie indeks pozycji. Inaczej slope byłby wyrażany w
+    jednostkach/odczyt i zawyżałby tempo proporcjonalnie do rzadkości serii.
     """
     if window_days is None:
         window_days = settings.BASELINE.trend_window_days
@@ -161,7 +166,11 @@ def compute_trend_slope(
         smoothing_window = settings.BASELINE.trend_smoothing
     if min_r_squared is None:
         min_r_squared = settings.BASELINE.trend_min_r_squared
-    recent = series[-window_days:]
+    if not series:
+        return None
+    newest = max(p.day for p in series)
+    cutoff = newest - timedelta(days=window_days - 1)
+    recent = sorted((p for p in series if p.day >= cutoff), key=lambda p: p.day)
     if len(recent) < max(4, smoothing_window + 2):
         return None
 
@@ -173,7 +182,11 @@ def compute_trend_slope(
         for i in range(len(raw))
     ])
 
-    x = np.arange(len(smoothed))
+    # oś x w dniach; cały szereg w jednym dniu nie daje policzalnego slope
+    origin = recent[0].day
+    x = np.array([(p.day - origin).days for p in recent], dtype=float)
+    if x[-1] == x[0]:
+        return None
     slope, intercept = np.polyfit(x, smoothed, 1)
     pred = slope * x + intercept
     ss_res = np.sum((smoothed - pred) ** 2)

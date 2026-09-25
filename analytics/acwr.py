@@ -348,7 +348,12 @@ def build_cardio_acwr(daily_series: list[SessionLoad]) -> ACWRResult:
     strefę "niewystarczające dane" zamiast fałszywej strefy ryzyka — to
     decyzja diagnostyczna, nie karząca (readiness_modifier => 0).
     """
-    n_valid = sum(1 for s in daily_series if s.load > 0)
+    # Liczymy w oknie chronic (28 dni), bo `daily_series` jest szersze
+    # (ACWR_LOOKBACK_DAYS = 35 -> 36 dni). Bez cięcia seria rozproszona
+    # na 36 dni przechodziła guard, m.in. z tego powodu, że chronic i tak liczymy
+    # tylko z ostatnich 28 dni.
+    chronic_series = daily_series[-settings.ACWR.chronic_window:]
+    n_valid = sum(1 for s in chronic_series if s.load > 0)
     if n_valid < settings.ACWR.cardio_min_valid_days:
         logger.info(
             "ACWR cardio: tylko %d dni z obciążeniem w oknie chronic (< %d) "
@@ -367,6 +372,27 @@ def build_cardio_acwr(daily_series: list[SessionLoad]) -> ACWRResult:
     acute = compute_acute_load(daily_series)
     chronic = compute_chronic_load(daily_series)
     return acwr_ratio(acute, chronic)
+
+
+def merge_gap(gap_strength: GapInfo, gap_cardio: GapInfo | None) -> GapInfo:
+    """Łączy lukę z toru siły i cardio w jeden kontekst dla raportu.
+
+    Zasada: bierzemy tor, który faktycznie wykrył przerwę i akurat dziś
+    wznawia (resuming_today) — jeśli oba wznawiają, dłuższa luka wygrywa
+    (poważniejszy sygnał ostrożności). Gdy żaden nie wznawia dziś, ale jeden
+    wykrył lukę w historii, ten trafia do outputu jako kontekst — ten przypadek
+    był udokumentowany w komentarzu, ale nie miał gałęzi, więc luka wykryta
+    wyłącznie przez cardio była cicho odrzucana.
+    """
+    if gap_cardio is None:
+        return gap_strength
+    if gap_strength.resuming_today and gap_cardio.resuming_today:
+        return gap_strength if gap_strength.gap_days >= gap_cardio.gap_days else gap_cardio
+    if gap_cardio.resuming_today and not gap_strength.resuming_today:
+        return gap_cardio
+    if gap_cardio.detected and not gap_strength.detected:
+        return gap_cardio
+    return gap_strength
 
 
 def build_acwr(
@@ -475,18 +501,9 @@ def build_acwr(
             "zone": cardio_res.zone,
         }
 
-    # luka łączona: bierz tor, który faktycznie wykrył przerwę i akurat dziś
-    # wznawia (resuming_today) — jeśli oba wznawiają, dłuższa luka wygrywa
-    # (poważniejszy sygnał ostrożności). Gdy żaden nie wznawia dziś, ale
-    # jeden wykrył lukę w historii, ten trafia do outputu jako kontekst.
-    gap = gap_strength
-    if gap_cardio is not None:
-        both_resuming = gap_strength.resuming_today and gap_cardio.resuming_today
-        if both_resuming:
-            gap = gap_strength if gap_strength.gap_days >= gap_cardio.gap_days else gap_cardio
-        elif gap_cardio.resuming_today and not gap_strength.resuming_today:
-            gap = gap_cardio
-        # domyślnie (gap_strength.resuming_today lub żaden) zostaje gap_strength
+    # luka łączona: patrz merge_gap() — tor, który wznawia dziś, a przy
+    # braku wznawiania ten, który wykrył przerwę (w tym cardio-only).
+    gap = merge_gap(gap_strength, gap_cardio)
 
     logger.info("ACWR siła: ratio=%.2f (%s), pokrycie RPE=%.1f%% | cardio: %s | gap: %s",
                 acwr_res.ratio, acwr_res.zone, rpe_cov["coverage_pct"],

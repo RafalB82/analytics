@@ -12,13 +12,16 @@ from analytics.acwr import (
     acwr_readiness_modifier,
     aggregate_daily_loads,
     build_acwr,
+    build_cardio_acwr,
     build_gap_override_message,
     compute_acute_load,
     compute_chronic_load,
     compute_session_load,
     detect_training_gap,
     fill_missing_days,
+    merge_gap,
 )
+from analytics.config import settings
 from analytics.fetch_hevy import (
     build_daily_load_series,
     cardio_session_daily_load,
@@ -464,3 +467,82 @@ class TestBuildAcwrGapIntegration:
         workouts = [_hevy_load(target - timedelta(days=i), weight=100.0) for i in range(28)]
         out = build_acwr(workouts, target)
         assert out["gap"].detected is False
+
+
+class TestCardioAcwrValidityGuard:
+    """Guard musi liczyć dni z obciążeniem w oknie CHRONIC (28 dni).
+
+    `daily_series` jest szersze niż chronic (ACWR_LOOKBACK_DAYS=35 -> 36 dni),
+    więc bez cięcia seria rozproszona na 36 dni przechodziła guard mimo że
+    chronic (liczone z 28) jest zdominowane zerami.
+    """
+
+    @staticmethod
+    def _series(load_days, chronic_window=28):
+        from datetime import date, timedelta
+
+        from analytics.acwr import SessionLoad
+        target = date(2026, 9, 25)
+        out = []
+        for i in range(36):
+            day = target - timedelta(days=35 - i)
+            out.append(SessionLoad(day=day, load=100.0 if i in load_days else 0.0))
+        assert chronic_window
+        return out
+
+    def test_sessions_outside_chronic_window_do_not_count(self):
+        # 8 sesji w ostatnich 28 dni + 4 wcześniej = 12 w całej serii.
+        # Przed poprawką 12 >= 12 przechodziło guard; chronic widzi tylko 8.
+        in_chronic = set(range(28, 36))
+        outside = set(range(0, 8))
+        r = build_cardio_acwr(self._series(in_chronic | outside))
+        assert r.zone == settings.ACWR.zone_insufficient
+
+    def test_enough_sessions_inside_chronic_window_pass(self):
+        in_chronic = set(range(15, 36))  # 21 sesji, wszystkie w oknie chronic
+        r = build_cardio_acwr(self._series(in_chronic))
+        assert r.zone != settings.ACWR.zone_insufficient
+
+
+class TestGapMergeAcrossTracks:
+    """Luka wykryta tylko przez cardio nie może być cicho odrzucana.
+
+    Komentarz w kodzie obiecywał, że gdy żaden tor nie wznawia dziś, a jeden
+    wykrył przerwę w historii, to trafia do outputu jako kontekst. Gałąź
+    nie istniała, więc `gap` zostawał `gap_strength` (niedetekcję) i
+    cardio-only gap nigdy nie był widoczny.
+    """
+
+    @staticmethod
+    def _gap(detected, days=0, resuming=False):
+        from analytics.acwr import GapInfo
+        return GapInfo(detected=detected, gap_days=days, severity="wysoki" if detected else "brak",
+                       last_training_day=None, resuming_today=resuming)
+
+    def test_cardio_only_gap_survives_when_nothing_resumes_today(self):
+        out = merge_gap(self._gap(False), self._gap(True, days=21))
+        assert out.detected is True and out.gap_days == 21
+
+    def test_strength_gap_kept_when_cardio_absent(self):
+        s = self._gap(True, days=14)
+        assert merge_gap(s, None) is s
+
+    def test_both_resuming_longer_gap_wins(self):
+        s = self._gap(True, days=10, resuming=True)
+        c = self._gap(True, days=21, resuming=True)
+        assert merge_gap(s, c) is c
+        assert merge_gap(c, s) is c
+
+    def test_cardio_resuming_wins_over_silent_strength(self):
+        s = self._gap(False)
+        c = self._gap(True, days=21, resuming=True)
+        assert merge_gap(s, c) is c
+
+    def test_strength_resuming_kept_when_cardio_only_historical(self):
+        # siła wznawia dziś, cardio ma tylko historyczną lukę -> zostaje siła
+        s = self._gap(True, days=5, resuming=True)
+        c = self._gap(True, days=30, resuming=False)
+        assert merge_gap(s, c) is s
+
+    def test_no_gap_anywhere(self):
+        assert merge_gap(self._gap(False), self._gap(False)).detected is False

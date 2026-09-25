@@ -45,6 +45,23 @@ def _avg_last(values: list[float], n: int) -> float | None:
     return sum(window) / len(window)
 
 
+def _saturated_windows(values: list[float], windows=(28, 14, 7)) -> list[float]:
+    """Średnie z okien, które są FAKTYCZNIE nasycone danymi.
+
+    `_avg_last` zaciska okno do dostępnej listy, więc dla serii krótszej niż
+    14 dni `avg7`, `avg14` i `avg28` to ta sama liczba. Wtedy spread między
+    oknami wynosi 0 nie dlatego, że aktywność jest stabilna, ale dlatego, że
+    porównujemy wartość z samą sobą — i kategoria wychodziła bezwarunkowo
+    "Stable" dla dowolnie chaotycznych danych. Do oceny używamy tylko okien
+    nasyconych, czyli takich, do których starczyło punktów.
+    """
+    return [
+        avg
+        for n, avg in ((n, _avg_last(values, n)) for n in windows)
+        if avg is not None and len(values) >= n
+    ]
+
+
 def activity_stability(values: list[float]) -> ActivityStability | None:
     """Kategoryzuje zmienność aktywności z pojedynczej serii dziennej.
 
@@ -53,22 +70,24 @@ def activity_stability(values: list[float]) -> ActivityStability | None:
             oczekiwana jako lista uporządkowana chronologicznie (najstarszy->najnowszy).
 
     Returns:
-        ActivityStability, albo None gdy danych za mało (< 7 dni / < 2 w najkrótszym oknie).
+        ActivityStability, albo None gdy danych za mało do porównania dwóch
+        okien — czyli mniej niż 14 dni, bo wtedy wszystkie okna zaciskają się do
+        tej samej średniej, a spread między nimi jest artefaktem, nie miarą
+        stabilności. Wymagamy >= 2 okien nasyconych.
     """
     if not values:
         return None
 
     avg7 = _avg_last(values, 7)
-    avg14 = _avg_last(values, 14)
-    avg28 = _avg_last(values, 28)
-
     if avg7 is None:
         return None
 
-    # fallback dla krótszych okien: bierzemy dostępne średnie
-    avgs = [a for a in (avg28, avg14, avg7) if a is not None]
-    ref = max(max(avgs), 1.0)
-    variation = (max(avgs) - min(avgs)) / ref
+    saturated = _saturated_windows(values)
+    if len(saturated) < 2:
+        return None
+
+    ref = max(max(saturated), 1.0)
+    variation = (max(saturated) - min(saturated)) / ref
 
     if variation < settings.STABILITY.stable_max_variation:
         category = "Stable"
@@ -79,8 +98,8 @@ def activity_stability(values: list[float]) -> ActivityStability | None:
 
     return ActivityStability(
         avg_7d=avg7,
-        avg_14d=avg14 if avg14 is not None else 0.0,
-        avg_28d=avg28 if avg28 is not None else 0.0,
+        avg_14d=_avg_last(values, 14) or 0.0,
+        avg_28d=_avg_last(values, 28) or 0.0,
         variation=variation,
         category=category,
     )

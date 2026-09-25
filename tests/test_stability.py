@@ -49,12 +49,26 @@ class TestActivityStability:
         for k in ("avg_7d", "avg_14d", "avg_28d", "variation", "category"):
             assert k in d
 
-    def test_short_history_uses_available(self):
-        # 10 dni -> wszystkie okna liczą się z dostępnych punktów
-        # (_avg_last bierze średnią z tego, co jest; nie 0.0)
-        s = activity_stability(_steady(n=10))
+    def test_short_history_returns_none_instead_of_false_stable(self):
+        # 10 dni: avg7/avg14/avg28 zaciskają się do TEJ SAMEJ średniej, więc
+        # spread między oknami to 0 artefaktem, a nie miarą stabilności.
+        # Kategoria wychodziła wtedy bezwarunkowo "Stable" dla dowolnie
+        # chaotycznych danych — brak podstaw, więc brak oceny (None).
+        # Pipeline serializuje to jako null (`if ctx.activity_stability`).
+        assert activity_stability(_steady(n=10)) is None
+
+    def test_wildly_variable_short_series_is_not_reported_stable(self):
+        # regresja: chaotyczne dane poniżej 14 dni nie mogą dać "Stable"
+        chaotic = [100, 300, 50, 400, 20, 350, 60, 10, 90, 25, 400, 33, 70]
+        assert activity_stability(chaotic) is None
+        assert activity_stability([100, 200]) is None
+
+    def test_two_saturated_windows_are_enough(self):
+        # 14 dni nasyca okna 14 i 7 -> da się już porównać dwie różne średnie
+        s = activity_stability([1000.0] * 7 + [5000.0] * 7)
         assert s is not None
+        assert s.variation > 0
+        assert s.category != "Stable"
         assert s.avg_7d > 0
         assert s.avg_14d > 0
         assert s.avg_28d > 0
-        assert s.category  # nie rzuca

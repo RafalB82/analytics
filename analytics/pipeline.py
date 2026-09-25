@@ -26,6 +26,7 @@ from . import explain as explain_mod
 from . import nutrition_adaptive as nutr_mod
 from . import stability as stab_mod
 from . import temperature as temp_mod
+from .baseline import TrendResult
 from .config import settings
 from .fetch_apple import build_apple_models
 from .readiness_integration import compute_full_readiness
@@ -43,7 +44,7 @@ def _dow_label(d: date) -> str:
     return _PL_DOW.get(d.weekday(), "?")
 
 
-def _trend_confidence_label(reliable: bool, r_squared: float | None) -> str:
+def _trend_confidence_label(trend: TrendResult | None) -> str:
     """Etykieta WIARYGODNOŚCI TRENDU (nie próbki).
 
     Rozdziela dwie rzeczy, które łatwo pomylić (sekcja 6.2a review):
@@ -56,10 +57,16 @@ def _trend_confidence_label(reliable: bool, r_squared: float | None) -> str:
       - reliable=True -> „High" (linia dobrze opisuje dane),
       - reliable=False -> „Low" (trend szumny/niepewny — nie ufać kierunkowi),
       - brak trendu (None) -> „brak danych".
+
+    Parametr to cały `TrendResult` (albo None), nie (reliable, r_squared):
+    `reliable` jest z definicji boolem, więc gałąź `if reliable is None`
+    była nieosiągalna, a `r_squared` nigdy nie był czytany mimo że cały
+    docstring opisuje właśnie R². Decyzję o etykiecie podejmuje
+    compute_trend_slope, więc nie dublujemy tu progu.
     """
-    if reliable is None:
+    if trend is None:
         return "brak danych"
-    return "High" if reliable else "Low"
+    return "High" if trend.reliable else "Low"
 
 
 def _serialize_trend(trend: Any, sample_conf: dict | None) -> dict | None:
@@ -72,9 +79,7 @@ def _serialize_trend(trend: Any, sample_conf: dict | None) -> dict | None:
     if trend is None:
         return None
     d = asdict(trend)
-    d["trend_confidence"] = _trend_confidence_label(
-        trend.reliable, trend.r_squared
-    )
+    d["trend_confidence"] = _trend_confidence_label(trend)
     # jawny alias wiarygodności trendu (reliable już jest, ale czytelnie w rozbiciu)
     d["trend_reliable"] = bool(trend.reliable)
     # pewność PRÓBKI (ilość/kompletność danych) — może być High przy Low trendu
@@ -182,7 +187,9 @@ def analytics_stage(ctx: PipelineContext) -> PipelineContext:
         rhr_trend=ctx.trend_rhr,
         target=ctx.target,
     )
-    ctx.goal_info = nutr_mod.build_goal_output(m["energy_series"], m["weight_info"], ctx.params)
+    ctx.goal_info = nutr_mod.build_goal_output(
+        m["energy_series"], m["weight_info"], ctx.params, target=ctx.target
+    )
 
     # Bilans porównuje spożycie z rzeczywistym wydatkiem TDEE. Cel dietetyczny
     # jest osobną wartością i nie może być raportowany jako expenditure.

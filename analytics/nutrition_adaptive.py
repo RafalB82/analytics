@@ -61,6 +61,7 @@ class TDEEEstimate:
     avg_stand_min: float        # średnie minuty stania / dzień w oknie
     avg_physical_effort: float  # średni effort / dzień
     training_days_ratio: float  # odsetek dni z wyraźną aktywnością (exercise>0)
+    end_age_days: int           # dystans końca okna od `target` (0 = okno dotyka teraźniejszości)
 
 
 def _kj_to_kcal(kj: float) -> float:
@@ -88,6 +89,7 @@ def compute_tdee(
     bodyweight_kg: float | None = None,
     window_days: int | None = None,
     compute_long: bool | None = None,
+    target_date: date | None = None,
 ) -> TDEEEstimate:
     """
     TDEE z aktywności Apple (basal + active) + marża wg celu.
@@ -101,6 +103,15 @@ def compute_tdee(
     czy liczyć też długie okno (28d) przy defaultzie 7d — zwracane jako
     pole pomocnicze w output (patrz run_analysis).
 
+    target_date: dzień analizy. Okno jest kotwiczone na `target_date`, a NIE na
+    ostatnim dostępnym punkcie energii. Bez tego 10-dniowo stary TDEE był
+    raportowany jako bieżący, a następnie porównywany z intake MFP z
+    bieżącego tygodnia. Oś regeneracji ma tu analogiczną bramkę świeżości
+    (baseline.is_current) — oś żywieniowa też musi ją mieć.
+    `end_age_days` raportuje dystans okna od `target`, więc zupełnie brak
+    danych w oknie to nie jest „cicho liczona średnia z epoki kamiennej",
+    lecz jawne ValueError.
+
     Rzuca ValueError, gdy brak wystarczającej liczby dni z kompletem energii.
     """
     window = window_days or settings.NUTRITION.activity_window_days
@@ -112,9 +123,20 @@ def compute_tdee(
     if not energy_series:
         recent = []
     else:
-        end_day = energy_series[-1].day
+        last_day = energy_series[-1].day
+        # anchor na target, gdy znany; energia z przyszłości nie ma sensu
+        end_day = min(last_day, target_date) if target_date is not None else last_day
         start_day = end_day - timedelta(days=window - 1)
         recent = [d for d in energy_series if start_day <= d.day <= end_day]
+        # Dane w oknie, które nie dociera do `target`, to nie "trend", tylko
+        # oszacowanie z innej epoki. Fail-closed: brak danych = brak TDEE.
+        if (target_date is not None and recent
+                and recent[-1].day < target_date - timedelta(days=window - 1)):
+            logger.warning(
+                "TDEE: brak danych energii w oknie %d dni przed %s (ostatni odczyt %s)",
+                window, target_date, recent[-1].day,
+            )
+            recent = []
 
     # Rozpiętość kalendarzowa okna: od najstarszego do najnowszego punktu + 1.
     # Jeśli w danych są dziury, `recent` zawiera `window` punktów rozciągniętych
@@ -153,6 +175,8 @@ def compute_tdee(
     logger.info("TDEE(%dd): basal=%.0f active=%.0f -> %.0f kcal, marża %.0f%% -> cel %.0f kcal",
                 window, basal_kcal, active_kcal, tdee, margin * 100, target)
 
+    end_age = (target_date - recent[-1].day).days if (target_date is not None and recent) else 0
+
     return TDEEEstimate(
         tdee_kcal=round(tdee, 0),
         basal_kcal=round(basal_kcal, 0),
@@ -160,6 +184,7 @@ def compute_tdee(
         window_days=window,
         n_days=len(complete),
         window_actual_days=span,
+        end_age_days=end_age,
         goal=goal,
         margin_pct=margin,
         target_kcal=target,
@@ -175,6 +200,7 @@ def compute_long_window_tdee(
     energy_series: list[DailyEnergy],
     goal: str = "utrzymanie",
     bodyweight_kg: float | None = None,
+    target_date: date | None = None,
 ) -> TDEEEstimate | None:
     """
     TDEE na dłuższym oknie (28d) — stabilniejsza średnica miesięczna.
@@ -186,13 +212,15 @@ def compute_long_window_tdee(
     try:
         return compute_tdee(
             energy_series, goal=goal, bodyweight_kg=bodyweight_kg,
-            window_days=long_window,
+            window_days=long_window, target_date=target_date,
         )
     except ValueError:
         return None
 
 
-def build_goal_output(energy_series, weight_info: dict, params: dict) -> dict:
+def build_goal_output(
+    energy_series, weight_info: dict, params: dict, target: date | None = None
+) -> dict:
     """Cel kaloryczny z aktywności Apple (TDEE + marża wg celu).
 
     TDEE = średnie basal + active z okna (7d, docelowo 28d) — z Apple Health.
@@ -209,6 +237,7 @@ def build_goal_output(energy_series, weight_info: dict, params: dict) -> dict:
             energy_series=energy_series,
             goal=goal,
             bodyweight_kg=bodyweight,
+            target_date=target,
         )
     except ValueError as e:
         logger.warning("TDEE: %s", e)
@@ -216,7 +245,7 @@ def build_goal_output(energy_series, weight_info: dict, params: dict) -> dict:
 
     # dłuższe okno (28d) jako porównanie do aktywnego (7d)
     long_est = compute_long_window_tdee(
-        energy_series, goal=goal, bodyweight_kg=bodyweight,
+        energy_series, goal=goal, bodyweight_kg=bodyweight, target_date=target,
     )
     long_info = None
     if long_est is not None:
@@ -226,6 +255,7 @@ def build_goal_output(energy_series, weight_info: dict, params: dict) -> dict:
             "window_days": long_est.window_days,
             "n_days": long_est.n_days,
             "window_actual_days": long_est.window_actual_days,
+            "end_age_days": long_est.end_age_days,
         }
 
     logger.info("CEL: %s -> target=%.0f kcal (TDEE 7d), long28: %s",
@@ -240,6 +270,7 @@ def build_goal_output(energy_series, weight_info: dict, params: dict) -> dict:
         "window_days": est.window_days,
         "n_days": est.n_days,
         "window_actual_days": est.window_actual_days,
+        "end_age_days": est.end_age_days,
         "margin_pct": est.margin_pct,
         "target_kcal": est.target_kcal,
         "protein_g": est.protein_g,

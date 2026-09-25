@@ -296,3 +296,49 @@ class TestBuildGoalOutput:
         out = build_goal_output(energy, {"present": False}, {"phase": "redukcja"})
         assert out["status"] == "ok"
         assert out["target_kcal"] < out["tdee_kcal"]
+
+
+class TestTdeeAnchoredOnTarget:
+    """Okno TDEE musi być kotwiczone na `target`, nie na ostatnim odczycie.
+
+    Bez tego 10-dniowo stary TDEE był raportowany jako bieżący, a pipeline
+    porównywał go z intake MFP z bieżącego tygodnia. Oś regeneracji ma
+    analogiczną bramkę świeżości (baseline.is_current) — oś żywieniowa nie miała.
+    """
+
+    @staticmethod
+    def _energy(days, end):
+        return [SimpleNamespace(
+            day=end - timedelta(days=days - 1 - i), basal_kj=7000.0, active_kj=800.0,
+            exercise_min=20, stand_min=200, physical_effort=0.3,
+        ) for i in range(days)]
+
+    def test_energy_ending_before_target_window_is_skipped(self):
+        from analytics.nutrition_adaptive import build_goal_output
+        target = date(2026, 9, 25)
+        # 11 dni energii kończące się 10 dni przed targetem
+        stale = self._energy(11, target - timedelta(days=10))
+        assert build_goal_output(stale, {}, {})["status"] == "ok"          # bez targetu: jak dawniej
+        out = build_goal_output(stale, {}, {}, target=target)
+        assert out["status"] == "skipped"
+
+    def test_fresh_energy_reports_zero_age(self):
+        from analytics.nutrition_adaptive import build_goal_output
+        target = date(2026, 9, 25)
+        out = build_goal_output(self._energy(7, target), {}, {}, target=target)
+        assert out["status"] == "ok"
+        assert out["end_age_days"] == 0
+        assert out["tdee_kcal"] > 0
+
+    def test_energy_never_ahead_of_target_is_ignored(self):
+        from analytics.nutrition_adaptive import build_goal_output
+        target = date(2026, 9, 25)
+        out = build_goal_output(self._energy(7, target + timedelta(days=5)), {}, {}, target=target)
+        assert out["status"] == "ok"
+        assert out["end_age_days"] == 0
+
+    def test_long_window_reports_age_too(self):
+        from analytics.nutrition_adaptive import build_goal_output
+        target = date(2026, 9, 25)
+        out = build_goal_output(self._energy(28, target), {}, {}, target=target)
+        assert out["long_window_28d"]["end_age_days"] == 0

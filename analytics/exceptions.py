@@ -44,12 +44,13 @@ class MissingBaselineError(InsufficientDataError):
     """Brak wystarczającej historii do wyliczenia baseline."""
 
 
-class InvalidWorkoutError(AnalyticsError):
-    """Trening z Hevy ma niespójne/pominięte dane uniemożliwiające ACWR."""
-
-
-class ConfigError(AnalyticsError):
-    """Błąd konfiguracji (np. niepoprawna strefa, zła faza w settings)."""
+# Uwaga: nie ma tu `InvalidWorkoutError` ani `ConfigError`. Oba były
+# zadeklarowane, ale nigdzie nie rzucane — żaden kod (poza samym tym modułem)
+# ich nie wspominał. Obie zapowiadały tryb fail-fast, którego ten pipeline
+# świadomie nie ma: pojedynczy niespójny workout jest filtrowany w
+# build_daily_load_series, a nieznana faza celu dostaje wartość domyślną.
+# Każdy `except InvalidWorkoutError` opierałby się na ścieżce, która nie
+# może się wykonać. Usunięte, bo deklaracja bez rzucenia jest myląca.
 
 
 __all__ = [
@@ -57,6 +58,4 @@ __all__ = [
     "InvalidMetricError",
     "MissingBaselineError",
     "InsufficientDataError",
-    "InvalidWorkoutError",
-    "ConfigError",
 ]

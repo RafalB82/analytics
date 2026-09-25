@@ -19,8 +19,9 @@ FILOZOFIA (zgodna z repozytorium):
 
 WEJŚCIE:
   eaten:  lista {day: date, kcal: float} — zjedzone kcal z MFP (dziennik).
-  tdee:   średni dzienny reference TDEE (kcal) z nutrition_adaptive (lub target_kcal,
-          jeśli compare_against_target).
+  tdee:   średni dzienny reference TDEE (kcal) z nutrition_adaptive. NIE target_kcal:
+          cel dietetyczny to osobna wartość, raportowanie go jako wydatku
+          zafałszowałoby niedobór w redukcji.
   target: target_date (data referencyjna; domyślnie ostatni dzień serii).
 
 WYJŚCIE (dict):
@@ -126,6 +127,25 @@ def compute_energy_balance(
     dated.sort(key=lambda pair: pair[0])
     if not dated:
         return _insufficient(eaten, window)
+
+    # Jeden wpis na dzień: agregujemy duplikaty dat. Bez tego n_valid mógł
+    # przekroczyć window_days, a cumulative_deficit_kcal liczył ten sam dzień
+    # wielokrotnie (7-dniowe okno dawało 8 zliczonych dni i przeskakiwało
+    # próg klasyfikacji ryzyka). Ścieżka produkcyjna z mfp_normalize
+    # dostarcza po jednym rekordzie na dzień, ale compute_energy_balance
+    # przyjmuje surową listę dict od każdego wywołującego.
+    by_day: dict[date, float] = {}
+    for d_e, e in dated:
+        kcal = e.get("kcal")
+        if kcal is None:
+            continue
+        by_day[d_e] = by_day.get(d_e, 0.0) + float(kcal)
+    if len(by_day) != len(dated):
+        logger.warning(
+            "energy_balance: zsumowano %d wpisów do %d dni (duplikaty dat)",
+            len(dated), len(by_day),
+        )
+    dated = [(d_e, {"kcal": kcal}) for d_e, kcal in sorted(by_day.items())]
 
     # okno kończy się NA target (gdy podany) albo na ostatnim dniu z danymi;
     # zawsze filtrowane po dacie — stare wpisy nie mogą udawać bieżącego tygodnia

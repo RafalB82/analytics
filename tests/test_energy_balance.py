@@ -55,8 +55,11 @@ class TestComputeEnergyBalance:
         # dni < próg (incomplete_day_kcal_floor=800) to niepełny log (wyjazd/weekend)
         # -> nie wchodzą do skumulowanego niedoboru, ale są raportowane.
         # 5 pełnych dni po 2400 + 2 niepełne (400, 500) przy wydatku 2500.
-        eaten = ([_eaten(i, 2400) for i in range(5)]  # pełne
-                 + [{"day": "2026-08-0" + str(n), "kcal": 400} for n in (7, 8)])  # niepełne
+        # Dni MUSZĄ być rozłączne: wpisy na ten sam dzień są sumowane, więc
+        # "niepełny" wpis na dacie, który już ma wpis pełny, nie byłby
+        # niepełnym dniem (a wcześniej właśnie na tym test opierał).
+        eaten = ([_eaten(i, 2400) for i in range(5)]  # pełne: 08-09..08-05
+                 + [_eaten(5, 400), _eaten(6, 500)])  # niepełne: 08-04, 08-03
         res = compute_energy_balance(eaten, expenditure_kcal=2500)
         assert res.status == "ok"
         assert res.n_valid_days == 5          # tylko pełne dni liczone
@@ -78,14 +81,14 @@ class TestComputeEnergyBalance:
 
     def test_data_quality_medium_one_incomplete(self):
         eaten = ([_eaten(i, 2400) for i in range(5)]
-                 + [{"day": "2026-08-0" + str(n), "kcal": 400} for n in (7,)])  # 1 niepełny
+                 + [_eaten(6, 400)])  # 1 niepełny, rozłączny dzień
         res = compute_energy_balance(eaten, expenditure_kcal=2500)
         assert res.data_quality == "medium"
         assert any("niepełnego logu" in n for n in res.data_quality_notes)
 
     def test_data_quality_low_multiple_incomplete(self):
         eaten = ([_eaten(i, 2400) for i in range(5)]
-                 + [{"day": "2026-08-0" + str(n), "kcal": 400} for n in (7, 8)])  # 2 niepełne
+                 + [_eaten(5, 400), _eaten(6, 500)])  # 2 niepełne, rozłączne dni
         res = compute_energy_balance(eaten, expenditure_kcal=2500)
         assert res.data_quality == "low"
         assert any("niepełnego logu" in n for n in res.data_quality_notes)
@@ -160,3 +163,39 @@ class TestMalformedDays:
         eaten = [_eaten(i, 2500) for i in range(6)] + [_eaten(30, 100)]
         res = compute_energy_balance(eaten, expenditure_kcal=2600)
         assert all(d["day"] != _eaten(30, 0)["day"] for d in res.daily)
+
+
+class TestDuplicateDaysAggregated:
+    """Jeden dzień = jeden wpis w raporcie, niezależnie od liczby wpisów.
+
+    Bez agregacji `n_valid` mógł przekroczyć `window_days`, a
+    `cumulative_deficit_kcal` liczył ten sam dzień wielokrotnie.
+    """
+
+    def test_same_day_entries_are_summed_into_one_daily_row(self):
+        T = date(2026, 8, 9)
+        eaten = [_eaten(i, 2500) for i in range(7)]
+        base = compute_energy_balance(eaten, expenditure_kcal=2500, target=T)
+        assert base.n_valid_days == 7 and len(base.daily) == 7
+
+        # ten sam dzień (days_back=3) podwójnie
+        dup = eaten + [_eaten(3, 2500)]
+        res = compute_energy_balance(dup, expenditure_kcal=2500, target=T)
+        assert res.n_valid_days == 7          # nie 8 w 7-dniowym oknie
+        assert len(res.daily) == 7
+        assert res.n_valid_days <= res.window_days
+        # zsumowany dzień ma 5000 kcal => nadwyżka 2500
+        assert res.cumulative_deficit_kcal == 2500
+
+    def test_split_day_meals_sum_correctly(self):
+        # realistyczne: dziennik MFP może mieć dwa wpisy na dzień
+        T = date(2026, 8, 9)
+        eaten = ([_eaten(i, 2500) for i in range(6)]
+                 + [{"day": (T - timedelta(days=6)).isoformat(), "kcal": 1200},
+                    {"day": (T - timedelta(days=6)).isoformat(), "kcal": 1300}])
+        res = compute_energy_balance(eaten, expenditure_kcal=2500, target=T)
+        assert res.n_valid_days == 7
+        row = [d for d in res.daily if d["day"] == (T - timedelta(days=6)).isoformat()]
+        assert len(row) == 1
+        assert row[0]["eaten_kcal"] == 2500
+        assert res.cumulative_deficit_kcal == 0

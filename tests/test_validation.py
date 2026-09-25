@@ -35,8 +35,13 @@ class TestCoerceFloat:
         with pytest.raises(InvalidMetricError):
             coerce_float(float("inf"), "hrv")
 
-    def test_none_passes_through(self):
-        assert coerce_float(None, "hrv") is None
+    def test_none_rejected_for_required_metric(self):
+        # allow_none=False (domyślnie) odrzuca brak wymaganej wartości
+        with pytest.raises(InvalidMetricError):
+            coerce_float(None, "hrv")
+
+    def test_none_passes_through_when_allowed(self):
+        assert coerce_float(None, "hrv", allow_none=True) is None
 
     def test_non_numeric_rejected(self):
         with pytest.raises(InvalidMetricError):
@@ -85,6 +90,10 @@ class TestRangeValidators:
 
     def test_validate_float_allows_none(self):
         assert validate_float(None, "hrv", 30, 250, allow_none=True) is None
+
+    def test_validate_float_rejects_none_for_required_metric(self):
+        with pytest.raises(InvalidMetricError):
+            validate_float(None, "hrv", 30, 250)
 
 
 class TestSetWeightAndReps:
@@ -226,3 +235,22 @@ class TestValidateInputListFields:
     def test_mfp_daily_kcal_is_returned(self):
         rows = [{"day": "2026-08-07", "kcal": 2400.0}]
         assert validate_input(_input_payload(mfp_daily_kcal=rows))[-1] == rows
+
+
+class TestRemovedDeadKnobs:
+    """Regresja na usunięcie martwych przełączników, które wyglądały na działające."""
+
+    def test_compare_against_target_is_gone(self):
+        # energy_balance porównuje z TDEE, nie z target_kcal — cel dietetyczny
+        # nie może być raportowany jako wydatek. Pola nie ma już w settings,
+        # bo nigdzie nie było czytane.
+        from analytics.config import settings
+        assert not hasattr(settings.ENERGY_BALANCE, "compare_against_target")
+
+    def test_dead_exceptions_removed(self):
+        from analytics import exceptions
+        assert not hasattr(exceptions, "InvalidWorkoutError")
+        assert not hasattr(exceptions, "ConfigError")
+        assert "InvalidWorkoutError" not in exceptions.__all__
+        # te, które FAKTYCZNIE są rzucane, zostały
+        assert hasattr(exceptions, "MissingBaselineError")

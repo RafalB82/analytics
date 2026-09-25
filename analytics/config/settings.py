@@ -206,9 +206,11 @@ class EnergyBalanceSettings:
     #: Próg PROPORCJONALNY do wydatku (nie bezwzględny): np. wydatek 2500 -> próg 1250.
     incomplete_frac_of_expenditure: float = 0.5
 
-    #: czy uwzględniać cel (marżę) — jeśli target_kcal < tdee (redukcja), ocena
-    #: niedoboru względem celu jest łagodniejsza niż względem surowego TDEE.
-    compare_against_target: bool = True
+    # Uwaga: nie ma tu przełącznika "porównuj względem celu". energy_balance
+    # celowo porównuje spożycie z TDEE, a nie z target_kcal — cel dietetyczny
+    # jest osobną wartością i raportowanie go jako wydatku zafałszowywałoby
+    # niedobór w redukcji. Były tu dwa pola, które wyglądały na działające,
+    # a nie były nigdzie czytane.
 
 
 # --- Readiness (finalny scoring) --------------------------------------------

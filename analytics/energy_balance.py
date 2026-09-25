@@ -172,7 +172,8 @@ def compute_energy_balance(
         })
 
     if n_valid < min_valid:
-        return _insufficient(eaten, window, n_valid=n_valid, daily=daily)
+        return _insufficient(eaten, window, n_valid=n_valid, daily=daily,
+                             n_incomplete=n_incomplete, expenditure_kcal=expenditure_kcal)
 
     eaten_mean = eaten_sum / n_valid if n_valid else 0.0
     covering = (eaten_mean / expenditure_kcal * 100) if expenditure_kcal else 0.0
@@ -253,17 +254,28 @@ def classify_deficit_risk(cumulative_deficit_kcal: float) -> str:
 
 
 def _insufficient(
-    eaten: list[dict], window: int, n_valid: int = 0, daily: list | None = None
+    eaten: list[dict],
+    window: int,
+    n_valid: int = 0,
+    daily: list | None = None,
+    n_incomplete: int = 0,
+    expenditure_kcal: float = 0.0,
 ) -> EnergyBalanceResult:
-    """Wynik, gdy za mało danych (brak sprawdzenia — nie karać, tylko zgłosić)."""
+    """Wynik, gdy za mało danych (brak sprawdzenia — nie karać, tylko zgłosić).
+
+    `n_incomplete` i `expenditure_kcal` są przekazywane, bo `daily` zawiera
+    wiersze z `incomplete: True`: przy twardym 0 wynik był wewnętrznie
+    sprzeczny (n_valid + n_incomplete != len(daily)), a przy znanym TDEE
+    raportował wydatek 0 kcal.
+    """
     logger.info("energiabalans: niewystarczające dane (brak zjedzonych kcal / za mało dni)")
     return EnergyBalanceResult(
         status="niewystarczające dane",
         n_valid_days=n_valid,
-        n_incomplete_days=0,
+        n_incomplete_days=n_incomplete,
         window_days=window,
         eaten_mean_kcal=0.0,
-        expenditure_mean_kcal=0.0,
+        expenditure_mean_kcal=round(expenditure_kcal, 0) if expenditure_kcal > 0 else 0.0,
         covering_pct=0.0,
         cumulative_deficit_kcal=0.0,
         deficit_risk="niewystarczające dane",

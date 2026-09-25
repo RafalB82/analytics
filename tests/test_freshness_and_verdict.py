@@ -347,3 +347,26 @@ class TestComputeFullReadinessFailsClosed:
         assert out.data_quality["status"] == "high"
         assert out.verdict["zone"] == "green"
         assert out.verdict["advice"] == "pełna objętość"
+
+
+class TestInsufficientDataConsistency:
+    """`_insufficient` nie może kasować liczników, które przekazuje `daily`.
+
+    Wiersze `incomplete: True` trafiały do `daily`, ale `n_incomplete_days`
+    był ustawiany na 0 — wynik był wewnętrznie sprzeczny. Przy znanym TDEE
+    raportowano też wydatek 0 kcal.
+    """
+
+    def test_incomplete_count_preserved_on_insufficient_path(self):
+        # 5 dni z niepełnym logiem + 1 dobry => n_valid=1 < min_valid
+        eaten = [_eaten(T - timedelta(days=i), kcal=200.0) for i in range(5)]
+        eaten.append(_eaten(T - timedelta(days=5), kcal=2500.0))
+        r = compute_energy_balance(eaten, 2500.0, target=T)
+        assert r.status == "niewystarczające dane"
+        assert r.n_incomplete_days == 5
+        assert r.n_valid_days + r.n_incomplete_days == len(r.daily)
+
+    def test_expenditure_reported_when_tdee_known(self):
+        r = compute_energy_balance([_eaten(T, kcal=100.0)], 2500.0, target=T)
+        assert r.status == "niewystarczające dane"
+        assert r.expenditure_mean_kcal == 2500.0
